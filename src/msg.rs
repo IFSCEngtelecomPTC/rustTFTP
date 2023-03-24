@@ -7,11 +7,13 @@ enum Mensagem {
 }
 
 fn get_opcode(buffer: &Vec<u8>) -> u16 {
-    u16.from_be(buffer[0] + buffer[1]<<8);
+    let msb:u16 = buffer[0].into();
+    let lsb:u16 = buffer[1].into();
+    u16::from_be(msb + lsb<<8)
 }
 
 pub fn from_bytes(buffer: Vec<u8>) -> Option<Mensagem> {
-    let opcode:u16 = get_opcode(buffer);
+    let opcode:u16 = get_opcode(&buffer);
     match opcode {
         1 => Some(Mensagem::rrq(Requisicao::from_bytes(buffer))),
         2 => Some(Mensagem::wrq(Requisicao::from_bytes(buffer))),
@@ -23,7 +25,7 @@ pub fn from_bytes(buffer: Vec<u8>) -> Option<Mensagem> {
 }
 
 pub trait Codec {
-    pub fn serialize() -> Vec<u8>;    
+    fn serialize() -> Vec<u8>;    
 }
 
 // Mensagens de requisição, que podem ser RRQ ou WRQ
