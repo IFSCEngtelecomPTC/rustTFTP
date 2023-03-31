@@ -1,4 +1,6 @@
-enum Mensagem {
+use std::fmt;
+
+pub enum Mensagem {
     Wrq(Requisicao), 
     Rrq(Requisicao),
     Err(ERR),
@@ -15,27 +17,28 @@ pub trait Codec {
 }
 
 // Mensagens de requisição, que podem ser RRQ ou WRQ
-enum TipoReq {
+pub enum TipoReq {
     WRQ,
     RRQ
 }
 
-enum Modo {
+#[derive(Debug)]
+pub enum Modo {
     Netascii,
     Octet,
     Mail
 }
 
 pub struct Requisicao {
-    fname: String,
-    modo: Modo,
-    tipo: TipoReq
+    pub fname: String,
+    pub modo: Modo,
+    pub tipo: TipoReq
 }
 
 // Mensagem de dados
 pub struct DATA {
-    block: u16,
-    body: Vec<u8>
+    pub block: u16,
+    pub body: Vec<u8>
 }
 
 // Mensagem de confirmação
@@ -197,4 +200,68 @@ pub fn from_bytes(buffer: Vec<u8>) -> Option<Mensagem> {
         ERR::CODE => ERR::from_bytes(buffer).and_then(|m| Some(Mensagem::Err(m))),
         _ => None
     }
+}
+
+impl fmt::Display for Requisicao {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Write strictly the first element into the supplied output
+        // stream: `f`. Returns `fmt::Result` which indicates whether the
+        // operation succeeded or failed. Note that `write!` uses syntax which
+        // is very similar to `println!`.
+        let tipo = match self.tipo {
+            TipoReq::RRQ => {
+                "RRQ"
+            },
+            TipoReq::WRQ => {
+                "WRQ"
+            }
+        };
+        write!(f, "{}: filename={}, modo={:?}", tipo, self.fname, self.modo)
+    }    
+}
+
+impl fmt::Display for DATA {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Write strictly the first element into the supplied output
+        // stream: `f`. Returns `fmt::Result` which indicates whether the
+        // operation succeeded or failed. Note that `write!` uses syntax which
+        // is very similar to `println!`.
+        write!(f, "Data: blocknum={}, body len={}", self.block, self.body.len())
+    }    
+}
+
+impl fmt::Display for ACK {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Write strictly the first element into the supplied output
+        // stream: `f`. Returns `fmt::Result` which indicates whether the
+        // operation succeeded or failed. Note that `write!` uses syntax which
+        // is very similar to `println!`.
+        write!(f, "ACK: blocknum={}", self.block)
+    }    
+}
+
+impl fmt::Display for ERR {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Write strictly the first element into the supplied output
+        // stream: `f`. Returns `fmt::Result` which indicates whether the
+        // operation succeeded or failed. Note that `write!` uses syntax which
+        // is very similar to `println!`.
+        write!(f, "Err: err_code={}, err_msg={}", self.err_code, self.err_msg)
+    }    
+}
+
+impl fmt::Display for Mensagem {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Write strictly the first element into the supplied output
+        // stream: `f`. Returns `fmt::Result` which indicates whether the
+        // operation succeeded or failed. Note that `write!` uses syntax which
+        // is very similar to `println!`.
+        match self {
+            Mensagem::Rrq(msg) => write!(f, "{}", msg),
+            Mensagem::Wrq(msg) => write!(f, "{}", msg),
+            Mensagem::Data(msg) => write!(f, "{}", msg),
+            Mensagem::Ack(msg) => write!(f, "{}", msg),
+            Mensagem::Err(msg) => write!(f, "{}", msg)
+        }
+    }    
 }

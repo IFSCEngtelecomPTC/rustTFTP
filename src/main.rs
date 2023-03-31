@@ -1,5 +1,6 @@
 use clap::Parser;
 mod msg;
+use std::fs;
 
 /// Um pequeno cliente TFTP experimental
 #[derive(Parser, Debug)]
@@ -16,6 +17,9 @@ struct Args {
 
 fn main() {
    let args = Args::parse();
+   let buffer = fs::read(args.server).expect("não conseguiu abrir ou ler");
+   let m1 = msg::from_bytes(buffer).expect("msg inválida");
 
-   println!("Server: {}:{}", args.server, args.port);
+   println!("Mensagem -> {}", m1);
+   // println!("Server: {}:{}", args.server, args.port);
 }
