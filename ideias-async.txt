@@ -20,7 +20,7 @@ struct Protocolo {
 /// Quando a MEF chega a um estado terminal, ela envia a instância de Protocolo pelo canal. 
 async fn handle_rx(mut proto: Protocolo, chan: Sender<Protocolo>) -> io::Result<Option<Protocolo>> {
   println!("rx");
-  protocolo.seqno += 1;
+  proto.seqno += 1;
   task::spawn(async {handle_tx(proto, chan).await;});
   Ok(None)
 }
