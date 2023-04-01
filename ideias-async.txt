@@ -15,15 +15,19 @@ struct Protocolo {
 /// tratador do estado. Isso vale inclusive para auto-transicao (poderia
 /// simplificar ?). A instancia do protocolo eh passada e consumida por cada
 /// tratador ... cada um passa essa instancia para o tratador seguinte.
+/// A MEF fica bem diferente ... ela inicia com o primeiro tratador, que espera por eventos. Ao recebê-los,
+/// processa-os e então executa as respectivas transições (cria nova task para o próximo tratador).
+/// Quando a MEF chega a um estado terminal, ela envia a instância de Protocolo pelo canal. 
 async fn handle_rx(mut proto: Protocolo, chan: Sender<Protocolo>) -> io::Result<Option<Protocolo>> {
   println!("rx");
+  protocolo.seqno += 1;
   task::spawn(async {handle_tx(proto, chan).await;});
   Ok(None)
 }
 
 async fn handle_tx(mut proto: Protocolo, chan: Sender<Protocolo>) -> io::Result<Option<Protocolo>> {
   println!("tx");
-  chan.send(proto);
+  chan.send(proto).await;
   Ok(None)  
 }
 
