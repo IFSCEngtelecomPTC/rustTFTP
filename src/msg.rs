@@ -190,6 +190,7 @@ impl ERR {
 
 }
 
+/// A factory function to build a TFTP message from a vector of bytes
 pub fn from_bytes(buffer: Vec<u8>) -> Option<Mensagem> {
     let opcode:u16 = get_shortint(&buffer);
     match opcode {
@@ -204,10 +205,6 @@ pub fn from_bytes(buffer: Vec<u8>) -> Option<Mensagem> {
 
 impl fmt::Display for Requisicao {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Write strictly the first element into the supplied output
-        // stream: `f`. Returns `fmt::Result` which indicates whether the
-        // operation succeeded or failed. Note that `write!` uses syntax which
-        // is very similar to `println!`.
         let tipo = match self.tipo {
             TipoReq::RRQ => {
                 "RRQ"
@@ -222,40 +219,24 @@ impl fmt::Display for Requisicao {
 
 impl fmt::Display for DATA {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Write strictly the first element into the supplied output
-        // stream: `f`. Returns `fmt::Result` which indicates whether the
-        // operation succeeded or failed. Note that `write!` uses syntax which
-        // is very similar to `println!`.
         write!(f, "Data: blocknum={}, body len={}", self.block, self.body.len())
     }    
 }
 
 impl fmt::Display for ACK {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Write strictly the first element into the supplied output
-        // stream: `f`. Returns `fmt::Result` which indicates whether the
-        // operation succeeded or failed. Note that `write!` uses syntax which
-        // is very similar to `println!`.
         write!(f, "ACK: blocknum={}", self.block)
     }    
 }
 
 impl fmt::Display for ERR {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Write strictly the first element into the supplied output
-        // stream: `f`. Returns `fmt::Result` which indicates whether the
-        // operation succeeded or failed. Note that `write!` uses syntax which
-        // is very similar to `println!`.
         write!(f, "Err: err_code={}, err_msg={}", self.err_code, self.err_msg)
     }    
 }
 
 impl fmt::Display for Mensagem {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Write strictly the first element into the supplied output
-        // stream: `f`. Returns `fmt::Result` which indicates whether the
-        // operation succeeded or failed. Note that `write!` uses syntax which
-        // is very similar to `println!`.
         match self {
             Mensagem::Rrq(msg) => write!(f, "{}", msg),
             Mensagem::Wrq(msg) => write!(f, "{}", msg),
