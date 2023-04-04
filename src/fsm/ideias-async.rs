@@ -1,7 +1,7 @@
 #[feature(rt)]
 use std::time::Duration;
 //use std::fmt;
-use tokio::{runtime};
+use tokio::{runtime, sync::oneshot};
 
 #[derive(Debug)]
 struct Protocolo {
@@ -50,12 +50,10 @@ async fn run_proto() -> io::Result<Option<Protocolo>> {
     seqno: 5,
     finished: false
   };
-  let (s,r) = bounded::<Protocolo>(1);
-  task::spawn(async {handle_rx(proto, s).await;});  
-  if r.is_closed() {
-    println!("Ops ... canal fechado !");
-  }
-  let result = r.recv().await;
+  let (tx, mut rx) = oneshot::channel();
+
+  tokio::spawn(async {handle_rx(proto, tx).await;});  
+  let result = rx.recv().await;
   println!("result: {:?}", result);
   if let Ok(proto) = result {
     println!("proto ok");
