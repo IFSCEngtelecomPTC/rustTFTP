@@ -2,6 +2,7 @@ use async_std::{fs::File, io, prelude::*,
                 task, future,
                 net::UdpSocket,
                 channel::*};
+use async_std::prelude::*;
 use std::time::Duration;
 //use std::fmt;
 
@@ -105,6 +106,11 @@ fn main() {
     //     }
     // });
     
+  let a = future::pending::<u32>();
+  let b = future::ready(1u8);
+  let c = future::ready(2u8);
+
+    let f = a.race(b).race(c);
     println!("Started task!");
     //task::block_on(reader_task);
     let r = task::block_on(task::spawn(run_proto()));
