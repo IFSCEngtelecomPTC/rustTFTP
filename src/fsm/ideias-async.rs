@@ -8,7 +8,8 @@ use std::time::Duration;
 #[derive(Debug)]
 struct Protocolo {
   buffer: Vec<u8>,
-  seqno: u16
+  seqno: u16,
+  finished: bool
 }
 
 /// uma transicao eh a criacao de uma task com o respectivo 
@@ -21,12 +22,15 @@ struct Protocolo {
 async fn handle_rx(mut proto: Protocolo, chan: Sender<Protocolo>) -> io::Result<Option<Protocolo>> {
   println!("rx");
   proto.seqno += 1;
-  task::spawn(async {handle_tx(proto, chan).await;});
+  if proto.seqno == 10 {
+    task::spawn(async {handle_tx(proto, chan).await;});
+  }
   Ok(None)
 }
 
 async fn handle_tx(mut proto: Protocolo, chan: Sender<Protocolo>) -> io::Result<Option<Protocolo>> {
   println!("tx");
+  proto.finished = true;
   chan.send(proto).await;
   Ok(None)  
 }
@@ -45,7 +49,8 @@ async fn handle_finish(proto: &mut Protocolo) -> io::Result<()> {
 async fn run_proto() -> io::Result<Option<Protocolo>> {
   let proto = Protocolo {
     buffer: vec![1,2,3,4,5],
-    seqno: 5
+    seqno: 5,
+    finished: false
   };
   let (s,r) = bounded::<Protocolo>(1);
   task::spawn(async {handle_rx(proto, s).await;});  
