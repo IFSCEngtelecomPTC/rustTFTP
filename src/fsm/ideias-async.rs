@@ -1,10 +1,7 @@
-use async_std::{fs::File, io, prelude::*, 
-                task, future,
-                net::UdpSocket,
-                channel::*};
-use async_std::prelude::*;
+#[feature(rt)]
 use std::time::Duration;
 //use std::fmt;
+use tokio::{runtime};
 
 #[derive(Debug)]
 struct Protocolo {
@@ -111,13 +108,15 @@ fn main() {
     //     }
     // });
     
-  let a = future::pending::<u32>();
-  let b = future::ready(1u8);
-  let c = future::ready(2u8);
 
-    let f = a.race(b).race(c);
+      let mut rt = tokio::runtime::Runtime::new().expect("");
+    // let mut rt = tokio::runtime::Builder::new_multi_thread()
+    // .worker_threads(1)
+    // .enable_all()
+    // .build()
+    // .expect("Não conseguiu iniciar runtime !");
+
     println!("Started task!");
-    //task::block_on(reader_task);
-    let r = task::block_on(task::spawn(run_proto()));
+    let r = rt.block_on(run_proto());
     println!("Stopped task: {:?}", r);
 }
