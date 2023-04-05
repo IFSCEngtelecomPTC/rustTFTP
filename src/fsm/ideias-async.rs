@@ -13,6 +13,7 @@ struct Protocolo {
   seqno: u16,
   finished: bool,
   timeout: u16,
+  retries: u16,
   estado: Estado
 }
 
@@ -55,13 +56,14 @@ enum Estado {
 
 
 impl Protocolo {
-  async fn new(addr: &str, timeout: u16) -> Self {
+  async fn new(addr: &str, timeout: u16, retries: u16) -> Self {
     Protocolo {
       sock: UdpSocket::bind(addr).await.expect("ao criar socket UDP"),
       buffer: vec![],
       seqno: 1,
       finished: false,
       timeout: timeout,
+      retries: retries,
       estado: Estado::RX
     }
   }
@@ -115,6 +117,7 @@ impl Protocolo {
         Evento::Msg(msg) => {
           println!("Adicionando {} bytes ao buffer", msg.len());
           self.buffer.extend_from_slice(&msg);
+          self.seqno = 1;
           // tokio::spawn(async {handle_tx(proto, chan).await;});
           self.estado = Estado::TX;
         }
@@ -130,7 +133,7 @@ impl Protocolo {
       match ev {
           Evento::Timeout => {
             self.seqno += 1;
-            if self.seqno == 10 {
+            if self.seqno == self.retries {
               self.estado = Estado::Finish;
             }
             println!("Timeout {}", self.seqno);                
@@ -139,6 +142,7 @@ impl Protocolo {
             println!("Adicionando {} bytes ao buffer", msg.len());
             self.buffer.extend_from_slice(&msg);
             self.estado = Estado::RX;
+            self.seqno = 1;
           }
           _ => {
             println!("Alguma outra coisa ...");
@@ -149,7 +153,7 @@ impl Protocolo {
 
 
 async fn run_proto() -> Option<Protocolo> {
-  let mut proto = Protocolo::new("0.0.0.0:1111", 2).await;
+  let mut proto = Protocolo::new("0.0.0.0:1111", 2, 3).await;
   // let (tx, mut rx) = oneshot::channel();
 
   while ! proto.is_finished() {
