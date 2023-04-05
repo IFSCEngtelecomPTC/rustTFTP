@@ -3,27 +3,38 @@ use std::time::Duration;
 //use std::fmt;
 use tokio::{runtime, sync::oneshot};
 use tokio::sync::oneshot::{Receiver,Sender};
+use tokio::net::UdpSocket;
 
 #[derive(Debug)]
 struct Protocolo {
+  sock: UdpSocket,
   buffer: Vec<u8>,
   seqno: u16,
-  finished: bool
+  finished: bool,
+  timeout: u16
 }
 
 #[derive(Debug)]
 enum Evento {
-  Msg(String),
+  Msg(Vec<u8>),
   Timeout,
   Nada
 }
 
 /// Pode-se criar uma função para receber eventos, e retorná-los encapsulados em um enum !
-async fn wait_event() -> Evento {
+async fn wait_event(proto: &Protocolo) -> Evento {
+  let mut buf = [0; 1024];
   tokio::select! {
-    val = tokio::time::sleep(Duration::from_secs(1)) => {
+    val = tokio::time::sleep(Duration::from_secs(proto.timeout as u64)) => {
       println!("Timeout: val={:?}", val);
       return Evento::Timeout;
+    }
+    val = proto.sock.recv_from(&mut buf) => {
+      if let Ok((len,addr)) = val {
+        println!("Rx: val={:?}", (len,addr));
+        let msg = buf[..len].to_vec();
+        return Evento::Msg(msg);
+      }
     }
   }
   Evento::Nada
@@ -40,10 +51,14 @@ async fn handle_rx(mut proto: Protocolo, chan: Sender<Protocolo>) {
   println!("rx");
 
   while proto.seqno < 10 {
-    match wait_event().await {
+    match wait_event(&proto).await {
       Evento::Timeout => {
         proto.seqno += 1;
         println!("Timeout {}", proto.seqno);        
+      }
+      Evento::Msg(msg) => {
+        println!("Adicionando {} bytes ao buffer", msg.len());
+        proto.buffer.extend_from_slice(&msg);
       }
       _ => {
         println!("Alguma outra coisa ...");
@@ -85,9 +100,11 @@ async fn handle_finish(proto: &mut Protocolo) -> io::Result<()> {
 
 async fn run_proto() -> Option<Protocolo> {
   let proto = Protocolo {
+    sock: UdpSocket::bind("0.0.0.0:1111").await.expect("ao criar socket UDP"),
     buffer: vec![1,2,3,4,5],
     seqno: 5,
-    finished: false
+    finished: false,
+    timeout: 2
   };
   let (tx, mut rx) = oneshot::channel();
 
