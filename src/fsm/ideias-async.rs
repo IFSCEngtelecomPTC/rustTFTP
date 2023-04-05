@@ -11,6 +11,24 @@ struct Protocolo {
   finished: bool
 }
 
+#[derive(Debug)]
+enum Evento {
+  Msg(String),
+  Timeout,
+  Nada
+}
+
+/// Pode-se criar uma função para receber eventos, e retorná-los encapsulados em um enum !
+async fn wait_event() -> Evento {
+  tokio::select! {
+    val = tokio::time::sleep(Duration::from_secs(1)) => {
+      println!("Timeout: val={:?}", val);
+      return Evento::Timeout;
+    }
+  }
+  Evento::Nada
+}
+
 /// uma transicao eh a criacao de uma task com o respectivo 
 /// tratador do estado. Isso vale inclusive para auto-transicao (poderia
 /// simplificar ?). A instancia do protocolo eh passada e consumida por cada
@@ -20,10 +38,30 @@ struct Protocolo {
 /// Quando a MEF chega a um estado terminal, ela envia a instância de Protocolo pelo canal. 
 async fn handle_rx(mut proto: Protocolo, chan: Sender<Protocolo>) {
   println!("rx");
+
   while proto.seqno < 10 {
-    proto.seqno += 1;
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    match wait_event().await {
+      Evento::Timeout => {
+        proto.seqno += 1;
+        println!("Timeout {}", proto.seqno);        
+      }
+      _ => {
+        println!("Alguma outra coisa ...");
+      }
+    }
+    
+    //   tokio::select! {
+    //   val = tokio::time::sleep(Duration::from_secs(1)) => {
+    //     println!("Timeout {}: val={:?}", proto.seqno, val);
+    //     proto.seqno+=1;
+    //   }
+    // }
   }
+
+  // while proto.seqno < 10 {
+  //   proto.seqno += 1;
+  //   tokio::time::sleep(Duration::from_secs(1)).await;
+  // }
   tokio::spawn(async {handle_tx(proto, chan).await;});
 
 }
