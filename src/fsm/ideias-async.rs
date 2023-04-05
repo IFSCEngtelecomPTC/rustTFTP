@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 #[feature(rt)]
 use std::time::Duration;
 //use std::fmt;
@@ -11,10 +12,14 @@ struct Protocolo {
   buffer: Vec<u8>,
   seqno: u16,
   finished: bool,
-  timeout: u16
+  timeout: u16,
+  estado: Estado
 }
 
 #[derive(Debug)]
+#[derive(PartialEq)]
+#[derive(Eq)]
+#[derive(Hash)]
 enum Evento {
   Msg(Vec<u8>),
   Timeout,
@@ -40,74 +45,117 @@ async fn wait_event(proto: &Protocolo) -> Evento {
   Evento::Nada
 }
 
-/// uma transicao eh a criacao de uma task com o respectivo 
-/// tratador do estado. Isso vale inclusive para auto-transicao (poderia
-/// simplificar ?). A instancia do protocolo eh passada e consumida por cada
-/// tratador ... cada um passa essa instancia para o tratador seguinte.
-/// A MEF fica bem diferente ... ela inicia com o primeiro tratador, que espera por eventos. Ao recebê-los,
-/// processa-os e então executa as respectivas transições (cria nova task para o próximo tratador).
-/// Quando a MEF chega a um estado terminal, ela envia a instância de Protocolo pelo canal. 
-async fn handle_rx(mut proto: Protocolo, chan: Sender<Protocolo>) {
-  println!("rx");
+#[derive(Debug)]
+#[derive(PartialEq)]
+enum Estado {
+  RX,
+  TX,
+  Finish
+}
 
-  loop {
-    match wait_event(&proto).await {
-      Evento::Timeout => {
-        proto.seqno += 1;
-        println!("Timeout {}", proto.seqno);        
+
+impl Protocolo {
+  async fn new(addr: &str, timeout: u16) -> Self {
+    Protocolo {
+      sock: UdpSocket::bind(addr).await.expect("ao criar socket UDP"),
+      buffer: vec![],
+      seqno: 1,
+      finished: false,
+      timeout: timeout,
+      estado: Estado::RX
+    }
+  }
+
+  fn is_finished(&self) -> bool {
+    self.estado == Estado::Finish
+  }
+
+  async fn get_event(&self) -> Evento {
+    let mut buf = [0; 1024];
+
+    tokio::select! {
+      val = tokio::time::sleep(Duration::from_secs(self.timeout as u64)) => {
+        println!("Timeout: val={:?}", val);
+        return Evento::Timeout;
       }
-      Evento::Msg(msg) => {
-        println!("Adicionando {} bytes ao buffer", msg.len());
-        proto.buffer.extend_from_slice(&msg);
-        tokio::spawn(async {handle_tx(proto, chan).await;});
-        break;
-      }
-      _ => {
-        println!("Alguma outra coisa ...");
+      val = self.sock.recv_from(&mut buf) => {
+        if let Ok((len,addr)) = val {
+          println!("Rx: val={:?}", (len,addr));
+          let msg = buf[..len].to_vec();
+          return Evento::Msg(msg);
+        }
       }
     }
-    
+    Evento::Nada
+  }
+  
+  async fn run_event(&mut self) {
+    let ev = self.get_event().await;
+    match self.estado {
+      Estado::RX => {
+        self.handle_rx(ev).await;
+      }
+      Estado::TX => {
+        self.handle_tx(ev).await;
+      }
+      Estado::Finish => {
+      }
+    }   
+
   }
 
+  async fn handle_rx(&mut self, ev: Evento) {
+    println!("rx");
+
+    match ev {
+        Evento::Timeout => {
+          self.seqno += 1;
+          println!("Timeout {}", self.seqno);        
+        }
+        Evento::Msg(msg) => {
+          println!("Adicionando {} bytes ao buffer", msg.len());
+          self.buffer.extend_from_slice(&msg);
+          // tokio::spawn(async {handle_tx(proto, chan).await;});
+          self.estado = Estado::TX;
+        }
+        _ => {
+          println!("Alguma outra coisa ...");
+        }
+    }    
+    println!("handle_rx: terminou");
+  }
+
+  async fn handle_tx(&mut self, ev: Evento) {
+      println!("tx");
+      match ev {
+          Evento::Timeout => {
+            self.seqno += 1;
+            if self.seqno == 10 {
+              self.estado = Estado::Finish;
+            }
+            println!("Timeout {}", self.seqno);                
+          }
+          Evento::Msg(msg) => {
+            println!("Adicionando {} bytes ao buffer", msg.len());
+            self.buffer.extend_from_slice(&msg);
+            self.estado = Estado::RX;
+          }
+          _ => {
+            println!("Alguma outra coisa ...");
+          }
+      }
+  }        
 }
 
-async fn handle_tx(mut proto: Protocolo, chan: Sender<Protocolo>) {
-  println!("tx");
-  proto.finished = true;
-  chan.send(proto);
-}
-
-/*
-async fn handle_init_tx(proto: &mut Protocolo) -> io::Result<()> {
-  task::spawn(async {handle_finish(proto).await;});
-  Ok(())  
-}
-
-async fn handle_finish(proto: &mut Protocolo) -> io::Result<()> {
-  Ok(())    
-}
-*/
 
 async fn run_proto() -> Option<Protocolo> {
-  let proto = Protocolo {
-    sock: UdpSocket::bind("0.0.0.0:1111").await.expect("ao criar socket UDP"),
-    buffer: vec![],
-    seqno: 5,
-    finished: false,
-    timeout: 2
-  };
-  let (tx, mut rx) = oneshot::channel();
+  let mut proto = Protocolo::new("0.0.0.0:1111", 2).await;
+  // let (tx, mut rx) = oneshot::channel();
 
-  tokio::spawn(async {handle_rx(proto, tx).await;}); 
-  let result = rx.await;
-  println!("result: {:?}", result);
-  if let Ok(proto) = result {
-    println!("proto ok");
-    return Some(proto);
-  } else {
-    println!("proto err");
-    return None;
+  while ! proto.is_finished() {
+    proto.run_event().await;
   }
+  Some(proto)
 }
 
 
@@ -125,35 +173,8 @@ async fn run_proto() -> Option<Protocolo> {
 //     Ok(())
 // }
 
-// async fn spiral(dt: u32) -> io::Result<()> {
-//     let mut stdout = io::stdout();
-//     stdout.write_all(b"Timer start !\n").await?;
-//     for k in 0..10 {
-//       task::sleep(Duration::from_secs(dt as u64)).await;
-//       stdout.write_all(format!("Timer: {}\n", k).as_bytes()).await?;
-//     }
-//     Ok(())
-// }
-
 fn main() {
-    // let reader_task = task::spawn(async {
-    //     let client = talk("191.36.13.62", 53);
-    //     let result = future::timeout(Duration::from_secs(5), client).await;
-    //     match result {
-    //         Ok(_) => {},
-    //         Err(e) => println!("Error talking to server: {:?}", e),
-    //     }
-    // });
-    // let tout_task = task::spawn(async {
-    //     let result = spiral(1).await;
-    //     match result {
-    //         Err(e) => println!("Error in timer: {:?}", e),
-    //         _ => {}
-    //     }
-    // });
-    
-
-      let mut rt = tokio::runtime::Runtime::new().expect("");
+    let mut rt = tokio::runtime::Runtime::new().expect("");
     // let mut rt = tokio::runtime::Builder::new_multi_thread()
     // .worker_threads(1)
     // .enable_all()
