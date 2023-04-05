@@ -2,6 +2,7 @@
 use std::time::Duration;
 //use std::fmt;
 use tokio::{runtime, sync::oneshot};
+use tokio::sync::oneshot::{Receiver,Sender};
 
 #[derive(Debug)]
 struct Protocolo {
@@ -17,20 +18,20 @@ struct Protocolo {
 /// A MEF fica bem diferente ... ela inicia com o primeiro tratador, que espera por eventos. Ao recebê-los,
 /// processa-os e então executa as respectivas transições (cria nova task para o próximo tratador).
 /// Quando a MEF chega a um estado terminal, ela envia a instância de Protocolo pelo canal. 
-async fn handle_rx(mut proto: Protocolo, chan: Sender<Protocolo>) -> io::Result<Option<Protocolo>> {
+async fn handle_rx(mut proto: Protocolo, chan: Sender<Protocolo>) {
   println!("rx");
-  proto.seqno += 1;
-  if proto.seqno == 10 {
-    task::spawn(async {handle_tx(proto, chan).await;});
+  while proto.seqno < 10 {
+    proto.seqno += 1;
+    tokio::time::sleep(Duration::from_secs(1)).await;
   }
-  Ok(None)
+  tokio::spawn(async {handle_tx(proto, chan).await;});
+
 }
 
-async fn handle_tx(mut proto: Protocolo, chan: Sender<Protocolo>) -> io::Result<Option<Protocolo>> {
+async fn handle_tx(mut proto: Protocolo, chan: Sender<Protocolo>) {
   println!("tx");
   proto.finished = true;
-  chan.send(proto).await;
-  Ok(None)  
+  chan.send(proto);
 }
 
 /*
@@ -44,7 +45,7 @@ async fn handle_finish(proto: &mut Protocolo) -> io::Result<()> {
 }
 */
 
-async fn run_proto() -> io::Result<Option<Protocolo>> {
+async fn run_proto() -> Option<Protocolo> {
   let proto = Protocolo {
     buffer: vec![1,2,3,4,5],
     seqno: 5,
@@ -52,15 +53,15 @@ async fn run_proto() -> io::Result<Option<Protocolo>> {
   };
   let (tx, mut rx) = oneshot::channel();
 
-  tokio::spawn(async {handle_rx(proto, tx).await;});  
-  let result = rx.recv().await;
+  tokio::spawn(async {handle_rx(proto, tx).await;}); 
+  let result = rx.await;
   println!("result: {:?}", result);
   if let Ok(proto) = result {
     println!("proto ok");
-    return Ok(Some(proto));
+    return Some(proto);
   } else {
     println!("proto err");
-    return Ok(None);
+    return None;
   }
 }
 
