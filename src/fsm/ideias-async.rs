@@ -50,7 +50,7 @@ async fn wait_event(proto: &Protocolo) -> Evento {
 async fn handle_rx(mut proto: Protocolo, chan: Sender<Protocolo>) {
   println!("rx");
 
-  while proto.seqno < 10 {
+  loop {
     match wait_event(&proto).await {
       Evento::Timeout => {
         proto.seqno += 1;
@@ -59,25 +59,15 @@ async fn handle_rx(mut proto: Protocolo, chan: Sender<Protocolo>) {
       Evento::Msg(msg) => {
         println!("Adicionando {} bytes ao buffer", msg.len());
         proto.buffer.extend_from_slice(&msg);
+        tokio::spawn(async {handle_tx(proto, chan).await;});
+        break;
       }
       _ => {
         println!("Alguma outra coisa ...");
       }
     }
     
-    //   tokio::select! {
-    //   val = tokio::time::sleep(Duration::from_secs(1)) => {
-    //     println!("Timeout {}: val={:?}", proto.seqno, val);
-    //     proto.seqno+=1;
-    //   }
-    // }
   }
-
-  // while proto.seqno < 10 {
-  //   proto.seqno += 1;
-  //   tokio::time::sleep(Duration::from_secs(1)).await;
-  // }
-  tokio::spawn(async {handle_tx(proto, chan).await;});
 
 }
 
@@ -101,7 +91,7 @@ async fn handle_finish(proto: &mut Protocolo) -> io::Result<()> {
 async fn run_proto() -> Option<Protocolo> {
   let proto = Protocolo {
     sock: UdpSocket::bind("0.0.0.0:1111").await.expect("ao criar socket UDP"),
-    buffer: vec![1,2,3,4,5],
+    buffer: vec![],
     seqno: 5,
     finished: false,
     timeout: 2
