@@ -13,7 +13,7 @@ fn get_shortint(buffer: &[u8]) -> u16 {
 }
 
 pub trait Codec {
-    fn serialize() -> Vec<u8>;    
+    fn serialize(&self) -> Vec<u8>;    
 }
 
 // Mensagens de requisição, que podem ser RRQ ou WRQ
@@ -54,7 +54,25 @@ pub struct ERR {
 
 // Implementação do trait Codec
 impl Codec for Requisicao {
-    fn serialize() -> Vec<u8> {
+    fn serialize(&self) -> Vec<u8> {
+        vec![]
+    }
+}
+
+impl Codec for ACK {
+    fn serialize(&self) -> Vec<u8> {
+        vec![]
+    }
+}
+
+impl Codec for DATA {
+    fn serialize(&self) -> Vec<u8> {
+        vec![]
+    }
+}
+
+impl Codec for ERR {
+    fn serialize(&self) -> Vec<u8> {
         vec![]
     }
 }
@@ -117,6 +135,7 @@ impl Requisicao {
 
 impl DATA {
     const CODE:u16 = 3;
+    pub const SIZE:usize = 512;
 
     pub fn from_bytes(buffer: Vec<u8>) -> Option<Self> {
         let opcode:u16 = get_shortint(&buffer);

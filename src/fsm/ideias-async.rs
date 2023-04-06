@@ -27,25 +27,6 @@ enum Evento {
   Nada
 }
 
-/// Pode-se criar uma função para receber eventos, e retorná-los encapsulados em um enum !
-async fn wait_event(proto: &Protocolo) -> Evento {
-  let mut buf = [0; 1024];
-  tokio::select! {
-    val = tokio::time::sleep(Duration::from_secs(proto.timeout as u64)) => {
-      println!("Timeout: val={:?}", val);
-      return Evento::Timeout;
-    }
-    val = proto.sock.recv_from(&mut buf) => {
-      if let Ok((len,addr)) = val {
-        println!("Rx: val={:?}", (len,addr));
-        let msg = buf[..len].to_vec();
-        return Evento::Msg(msg);
-      }
-    }
-  }
-  Evento::Nada
-}
-
 #[derive(Debug)]
 #[derive(PartialEq)]
 enum Estado {
@@ -74,9 +55,10 @@ impl Protocolo {
 
   async fn get_event(&self) -> Evento {
     let mut buf = [0; 1024];
+    let f_timeout = tokio::time::sleep(Duration::from_secs(self.timeout as u64));
 
     tokio::select! {
-      val = tokio::time::sleep(Duration::from_secs(self.timeout as u64)) => {
+      val = f_timeout, if self.timeout > 0 => {
         println!("Timeout: val={:?}", val);
         return Evento::Timeout;
       }
@@ -153,7 +135,7 @@ impl Protocolo {
 
 
 async fn run_proto() -> Option<Protocolo> {
-  let mut proto = Protocolo::new("0.0.0.0:1111", 2, 3).await;
+  let mut proto = Protocolo::new("0.0.0.0:1111", 1, 3).await;
   // let (tx, mut rx) = oneshot::channel();
 
   while ! proto.is_finished() {
