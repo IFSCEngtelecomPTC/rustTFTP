@@ -95,8 +95,8 @@ impl Sessao {
 
   }
 
-  fn get_server_addr(&self) -> String {
-    format!("{}:{}", self.server, self.port)
+  fn get_server_addr(&self, port: u16) -> String {
+    format!("{}:{}", self.server, port)
   }
 
   async fn receive(&mut self, fname: &str) -> Option<()>{
@@ -106,7 +106,7 @@ impl Sessao {
     if let Some(req) = msg::Requisicao::new_rrq(fname, msg::Modo::Octet) {
         let mesg = req.serialize();
         println!("msg: {:?}", mesg);
-        let n = self.sock.send_to(&mesg, self.get_server_addr()).await;
+        let n = self.sock.send_to(&mesg, self.get_server_addr(self.port)).await;
         self.estado = Estado::RX;
         self.run().await;
         Some(())
@@ -162,7 +162,7 @@ impl Sessao {
                         }
                         if let Some(resp) = msg::ACK::new(data.block) {
                             let mesg = resp.serialize();                                
-                            self.sock.send_to(&mesg, self.get_server_addr()).await;
+                            self.sock.send_to(&mesg, self.get_server_addr(self.cur_port)).await;
                         }                        
                     }
                     msg::Mensagem::Err(err) => {

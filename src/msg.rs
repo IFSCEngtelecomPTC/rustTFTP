@@ -13,13 +13,27 @@ fn get_shortint(buffer: &[u8]) -> u16 {
 }
 
 pub trait Codec {
-    fn serialize(&self) -> Vec<u8>;    
+    fn init(&self, code: u16) -> bytes::BytesMut {
+        let buffer = bytes::BytesMut::from(code.to_be_bytes().as_ref());
+        buffer
+    }
+
+    fn serialize(&self) -> bytes::BytesMut;    
 }
 
 // Mensagens de requisição, que podem ser RRQ ou WRQ
 pub enum TipoReq {
     WRQ,
     RRQ
+}
+
+impl TipoReq {
+    fn code(&self) -> u16 {
+        match self {
+            TipoReq::RRQ => Requisicao::CODE_RRQ,
+            TipoReq::WRQ => Requisicao::CODE_WRQ
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -29,6 +43,24 @@ pub enum Modo {
     Mail
 }
 
+impl Modo {
+    fn as_str0(&self) -> String {
+        String::from(match self {
+            Modo::Mail => "mail",
+            Modo::Netascii => "netascii",
+            Modo::Octet => "octet"
+        })
+    }
+
+    fn as_str(&self) -> &str {
+        match self {
+            Modo::Mail => "mail",
+            Modo::Netascii => "netascii",
+            Modo::Octet => "octet"
+        }
+    }
+
+}
 pub struct Requisicao {
     pub fname: String,
     pub modo: Modo,
@@ -52,28 +84,43 @@ pub struct ERR {
     err_msg: String
 }
 
+
 // Implementação do trait Codec
 impl Codec for Requisicao {
-    fn serialize(&self) -> Vec<u8> {
-        vec![]
+    fn serialize(&self) -> bytes::BytesMut {
+        let mut buffer = self.init(self.tipo.code());
+        buffer.extend(self.fname.as_bytes());
+        buffer.extend(&[0]);
+        buffer.extend(self.modo.as_str().as_bytes());
+        buffer.extend(&[0]);
+        buffer
     }
 }
 
 impl Codec for ACK {
-    fn serialize(&self) -> Vec<u8> {
-        vec![]
+    fn serialize(&self) -> bytes::BytesMut {
+        let mut buffer = self.init(ACK::CODE);
+        buffer.extend(self.block.to_be_bytes());
+        buffer
     }
 }
 
 impl Codec for DATA {
-    fn serialize(&self) -> Vec<u8> {
-        vec![]
+    fn serialize(&self) -> bytes::BytesMut {
+        let mut buffer = self.init(DATA::CODE);
+        buffer.extend(self.block.to_be_bytes());
+        buffer.extend(&self.body);
+        buffer
     }
 }
 
 impl Codec for ERR {
-    fn serialize(&self) -> Vec<u8> {
-        vec![]
+    fn serialize(&self) ->bytes::BytesMut {
+        let mut buffer = self.init(DATA::CODE);
+        buffer.extend(self.err_code.to_be_bytes());
+        buffer.extend(self.err_msg.as_bytes());
+        buffer.extend(&[0]);
+        buffer
     }
 }
 
