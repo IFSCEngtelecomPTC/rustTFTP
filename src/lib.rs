@@ -7,6 +7,7 @@ use tokio::sync::oneshot::{Receiver,Sender};
 use tokio::net::UdpSocket;
 use std::fs;
 use bytes::BytesMut;
+use std::io;
 use std::net::SocketAddr;
 mod msg;
 
@@ -17,6 +18,7 @@ struct Sessao {
   sock: UdpSocket,
   server: String,
   port: u16,
+  cur_port: u16,
   buffer: BytesMut,
   seqno: u16,
   finished: bool,
@@ -39,12 +41,11 @@ enum Evento {
 #[derive(Debug)]
 #[derive(PartialEq)]
 enum Estado {
-    Idle,
+  Idle,
   RX,
   TX,
   Finish
 }
-
 
 impl Sessao {
   async fn new(server:&str, port:u16, timeout: u16, retries: u16) -> Self {
@@ -52,6 +53,7 @@ impl Sessao {
       sock: UdpSocket::bind("0.0.0.0:0").await.expect("ao criar socket UDP"),
       server: server.to_owned(),
       port: port,
+      cur_port: 0,
       buffer: BytesMut::new(),
       seqno: 1,
       finished: false,
@@ -103,6 +105,7 @@ impl Sessao {
     }
     if let Some(req) = msg::Requisicao::new_rrq(fname, msg::Modo::Octet) {
         let mesg = req.serialize();
+        println!("msg: {:?}", mesg);
         let n = self.sock.send_to(&mesg, self.get_server_addr()).await;
         self.estado = Estado::RX;
         self.run().await;
@@ -111,7 +114,6 @@ impl Sessao {
         None
     }
     
-
   }
 
   async fn get_event(&mut self) -> Evento {
@@ -126,30 +128,20 @@ impl Sessao {
       val = self.sock.recv_from(&mut buf) => {
         if let Ok((len,addr)) = val {
           println!("Rx: val={:?}", (len,addr));
-          let msg = buf[..len].to_vec();
-          self.port = addr.port();
-          return Evento::Msg(msg);
+          // TODO: conferir o ip do servidor
+          if self.cur_port == 0 {
+            self.cur_port = addr.port();
+          }
+          if self.cur_port == addr.port() {
+            let msg = buf[..len].to_vec();
+            return Evento::Msg(msg);
+          }
         }
       }
     }
     Evento::Nada
   }
   
-//   async fn run_event(&mut self) {
-//     let ev = self.get_event().await;
-//     match self.estado {
-//       Estado::RX => {
-//         self.handle_rx(ev).await;
-//       }
-//       Estado::TX => {
-//         self.handle_tx(ev).await;
-//       }
-//       Estado::Finish => {
-//       }
-//     }   
-
-//   }
-
   async fn handle_rx(&mut self, ev: Evento) {
     println!("rx");
 
@@ -257,7 +249,7 @@ impl ClienteTFTP {
         let r = rt.block_on(self.do_send(fname));    
     }
 
-    pub fn recebe(&self, fname: &str) {
+    pub fn recebe(&self, fname: &str, local: &str) -> io::Result<()>{
         let mut rt = tokio::runtime::Runtime::new().expect("");
         // let mut rt = tokio::runtime::Builder::new_multi_thread()
         // .worker_threads(1)
@@ -265,7 +257,11 @@ impl ClienteTFTP {
         // .build()
         // .expect("Não conseguiu iniciar runtime !");
     
-        let r = rt.block_on(self.do_receive(fname));    
+        let r = rt.block_on(self.do_receive(fname));
+        if let Some(sessao) = r {
+          fs::write("local", sessao.buffer)?;
+        }
+        Ok(())
     }
 }
 

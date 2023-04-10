@@ -1,5 +1,7 @@
 use clap::Parser;
+use tftp::ClienteTFTP;
 mod msg;
+use std::error::Error;
 use std::fs;
 
 /// Um pequeno cliente TFTP experimental
@@ -17,9 +19,9 @@ struct Args {
 
 fn main() {
    let args = Args::parse();
-   let buffer = fs::read(args.server).expect("não conseguiu abrir ou ler");
-   let m1 = msg::from_bytes(buffer).expect("msg inválida");
-
-   println!("Mensagem -> {}", m1);
-   // println!("Server: {}:{}", args.server, args.port);
+   let cliente = ClienteTFTP::new(&args.server, args.port);
+   match cliente.recebe("teste", "teste") {
+      Ok(_) => println!("Arquivo recebido e gravado"),
+      Err(e) => println!("Erro: {:?}", e)
+   }
 }
