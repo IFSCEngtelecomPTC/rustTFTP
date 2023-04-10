@@ -43,7 +43,9 @@ enum Evento {
 enum Estado {
   Idle,
   RX,
+  InitTX,
   TX,
+  FinishTX,
   Finish
 }
 
@@ -75,8 +77,14 @@ impl Sessao {
           Estado::RX => {
             self.handle_rx(ev).await;
           }
+          Estado::InitTX => {
+            self.handle_init_tx(ev).await;
+          }
           Estado::TX => {
             self.handle_tx(ev).await;
+          }
+          Estado::FinishTX => {
+            self.handle_finish_tx(ev).await;
           }
           Estado::Finish => {
           }
@@ -182,27 +190,124 @@ impl Sessao {
     println!("handle_rx: terminou");
   }
 
-  async fn handle_tx(&mut self, ev: Evento) {
-      println!("tx");
-      match ev {
-          Evento::Timeout => {
-            self.seqno += 1;
-            if self.seqno == self.retries {
-              self.estado = Estado::Finish;
-            }
-            println!("Timeout {}", self.seqno);                
-          }
-          Evento::Msg(msg) => {
-            println!("Adicionando {} bytes ao buffer", msg.len());
-            self.buffer.extend_from_slice(&msg);
-            self.estado = Estado::RX;
-            self.seqno = 1;
-          }
-          _ => {
-            println!("Alguma outra coisa ...");
+  fn get_chunk_size(&self) -> usize {
+    msg::DATA::SIZE.min(self.buffer.len())
+  }
+
+  async fn send_data(&self) -> Option<bool> {
+    let body_len = self.get_chunk_size();
+    if let Some(data) = msg::DATA::new(self.seqno, &self.buffer[..body_len]) {
+      let mesg = data.serialize();                                
+      self.sock.send_to(&mesg, self.get_server_addr(self.cur_port)).await;
+      return Some(body_len < msg::DATA::SIZE);
+    }
+    None
+  }    
+  
+  async fn handle_init_tx(&mut self, ev: Evento) {
+    println!("init-tx");
+    match ev {
+      Evento::Timeout => {
+          self.estado = Estado::Finish;
+      }
+      Evento::Msg(buffer) => {
+          if let Some(mesg) = msg::from_bytes(buffer) {
+              match mesg {
+                  msg::Mensagem::Ack(ack) => {
+                      if ack.block == 0 {
+                          self.seqno = 1;
+                                                    
+                          match self.send_data().await {
+                            Some(true) => self.estado = Estado::FinishTX,
+                            Some(false) => self.estado = Estado::TX,
+                            None => self.estado = Estado::Finish
+                          }
+                      } else {
+                        self.estado = Estado::Finish;
+                      }                   
+                  }
+                  msg::Mensagem::Err(err) => {
+                      self.estado = Estado::Finish;
+
+                  }
+                  _ => {
+
+                  }
+              }
           }
       }
-  }        
+      _ => {
+        println!("Alguma outra coisa ...");
+      }
+  }    
+}
+
+  async fn handle_finish_tx(&mut self, ev: Evento) {
+    println!("finish-tx");
+    match ev {
+      Evento::Timeout => {
+          self.send_data().await;
+      }
+      Evento::Msg(buffer) => {
+          if let Some(mesg) = msg::from_bytes(buffer) {
+              match mesg {
+                  msg::Mensagem::Ack(ack) => {
+                      if ack.block == self.seqno {
+                        self.estado = Estado::Finish;
+                      }                    
+                  }
+                  msg::Mensagem::Err(err) => {
+                      self.estado = Estado::Finish;
+
+                  }
+                  _ => {
+
+                  }
+              }
+          }
+      }
+      _ => {
+        println!("Alguma outra coisa ...");
+      }
+    }
+  }
+
+  async fn handle_tx(&mut self, ev: Evento) {
+    println!("tx");
+    match ev {
+      Evento::Timeout => {
+        self.send_data().await;
+      }
+      Evento::Msg(buffer) => {
+          if let Some(mesg) = msg::from_bytes(buffer) {
+              match mesg {
+                  msg::Mensagem::Ack(ack) => {
+                      if ack.block == self.seqno {
+                          self.seqno += 1;
+                          self.buffer.split_to(self.get_chunk_size());
+                          
+                          match self.send_data().await {
+                            Some(true) => self.estado = Estado::FinishTX,
+                            Some(false) => self.estado = Estado::TX,
+                            None => self.estado = Estado::Finish
+                          }
+                      }                    
+                  }
+                  msg::Mensagem::Err(err) => {
+                      self.estado = Estado::Finish;
+
+                  }
+                  _ => {
+
+                  }
+              }
+          }
+      }
+      _ => {
+        println!("Alguma outra coisa ...");
+      }
+  }    
+}
 }
 
 #[derive(Debug)]

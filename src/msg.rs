@@ -75,13 +75,13 @@ pub struct DATA {
 
 // Mensagem de confirmação
 pub struct ACK {
-    block: u16
+    pub block: u16
 }
 
 // Mensagem de erro
 pub struct ERR {
-    err_code: u16,
-    err_msg: String
+    pub err_code: u16,
+    pub err_msg: String
 }
 
 
@@ -178,6 +178,16 @@ impl Requisicao {
         Requisicao::new(TipoReq::RRQ, fname, modo)
     }
 
+    pub fn is_rrq(buffer: &[u8]) -> bool {
+        let opcode:u16 = get_shortint(&buffer);
+        opcode == Requisicao::CODE_RRQ
+    }
+
+    pub fn is_wrq(buffer: &[u8]) -> bool {
+        let opcode:u16 = get_shortint(&buffer);
+        opcode == Requisicao::CODE_WRQ
+    }
+
 }
 
 impl DATA {
@@ -205,6 +215,11 @@ impl DATA {
             body: buffer.to_vec()
         })
     }
+
+    pub fn is_data(buffer: &[u8]) -> bool {
+        let opcode:u16 = get_shortint(&buffer);
+        opcode == DATA::CODE    
+    }
 }
 
 impl ACK {
@@ -228,6 +243,12 @@ impl ACK {
             block: blocknum,
         })
     }   
+
+    pub fn is_ack(buffer: &[u8]) -> bool {
+        let opcode:u16 = get_shortint(&buffer);
+        opcode == ACK::CODE    
+    }
+
 }
 
 impl ERR {
@@ -253,6 +274,11 @@ impl ERR {
             err_msg: err_msg.to_owned()
         })
     }   
+
+    pub fn is_err(buffer: &[u8]) -> bool {
+        let opcode:u16 = get_shortint(&buffer);
+        opcode == ERR::CODE    
+    }
 
 }
 
