@@ -97,10 +97,15 @@ impl Sessao {
     if self.estado != Estado::Idle {
         panic!("sessão em uso");
     }
-    self.buffer.extend_from_slice(data);
-    self.estado = Estado::TX;
     
-
+    if let Some(req) = msg::Requisicao::new_wrq(fname, msg::Modo::Octet) {
+      let mesg = req.serialize();
+      println!("wrq: {:?}", mesg);
+      let n = self.sock.send_to(&mesg, self.get_server_addr(self.port)).await;
+      self.buffer.extend_from_slice(data);
+      self.estado = Estado::InitTX;
+      self.run().await;
+    }
   }
 
   fn get_server_addr(&self, port: u16) -> String {
@@ -113,7 +118,7 @@ impl Sessao {
     }
     if let Some(req) = msg::Requisicao::new_rrq(fname, msg::Modo::Octet) {
         let mesg = req.serialize();
-        println!("msg: {:?}", mesg);
+        println!("rrq: {:?}", mesg);
         let n = self.sock.send_to(&mesg, self.get_server_addr(self.port)).await;
         self.estado = Estado::RX;
         self.run().await;
