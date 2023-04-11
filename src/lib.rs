@@ -51,6 +51,10 @@ enum Estado {
   Finish
 }
 
+/// A Session is responsible for a file transfer (TX or RX).
+/// When RXing, the file contents will be stored in attribute "buffer"
+/// When TXing, file contents are first stored in "buffer", and then sent from there
+/// In the end, attribute "status" contains status of transmission (see enum Status)
 impl Sessao {
   async fn new(server:&str, port:u16, timeout: u16, retries: u16) -> Option<Self> {
     if let Some(ip) = Sessao::parse_ip(server) {
@@ -70,6 +74,8 @@ impl Sessao {
     None
   }
 
+  /// converts a string with an IP adress to a Ipv4Addr
+  /// is there a simpler way ???
   fn parse_ip(ip: &str) -> Option<Ipv4Addr> {
     let ip:Vec<_> = ip.split('.')
                            .map(|c| c.parse::<u8>())
@@ -85,10 +91,13 @@ impl Sessao {
     None
   }
 
+  /// just checks if FSM is finished
   fn is_finished(&self) -> bool {
     self.estado == Estado::Finish
   }
 
+  /// runs the FSM until it finishes
+  /// waits for events and handles them
   async fn run(&mut self) {
     while ! self.is_finished() {
         let ev = self.get_event().await;
@@ -112,6 +121,7 @@ impl Sessao {
     }
   }
 
+  /// starts transmission of a file: sends contents of "data" to a file named "fname"
   async fn send(&mut self, fname: &str, data: &[u8]) {
     if self.estado != Estado::Idle {
         panic!("sessão em uso");
@@ -127,6 +137,8 @@ impl Sessao {
     }
   }
 
+  /// starts reception of file "fname".
+  /// In the end, its contents are contained in attribute "buffer"
   async fn receive(&mut self, fname: &str) -> Option<()>{
     if self.estado != Estado::Idle {
         panic!("sessão em uso");
@@ -144,6 +156,7 @@ impl Sessao {
     
   }
 
+  /// waits for an event, and return it
   async fn get_event(&mut self) -> Evento {
     let mut buf = [0; 1024];
     let f_timeout = tokio::time::sleep(Duration::from_secs(self.timeout as u64));
@@ -171,6 +184,7 @@ impl Sessao {
     Evento::Nada
   }
   
+  /// FSM handler for state RX
   async fn handle_rx(&mut self, ev: Evento) {
     println!("rx");
 
@@ -213,10 +227,12 @@ impl Sessao {
     println!("handle_rx: terminou");
   }
 
+  /// calculates current chunk size
   fn get_chunk_size(&self) -> usize {
     msg::DATA::SIZE.min(self.buffer.len())
   }
 
+  /// sends a block of data ... the first available chunk in buffer
   async fn send_data(&self) -> Option<bool> {
     let body_len = self.get_chunk_size();
     if let Some(data) = msg::DATA::new(self.seqno, &self.buffer[..body_len]) {
@@ -227,6 +243,8 @@ impl Sessao {
     None
   }    
   
+  /// retransmits last block of data
+  /// if max retransmissions are exceeded, finishes the FSM
   async fn retransmit(&mut self) {
     if self.retries < self.max_retries {
       self.retries+=1;
@@ -237,6 +255,7 @@ impl Sessao {
     }
   }
 
+  /// sends next block of data, and updates state accordingly
   async fn send_next(&mut self) {
     match self.send_data().await {
       Some(true) => self.estado = Estado::FinishTX,
@@ -245,6 +264,7 @@ impl Sessao {
     }
   }
 
+  /// FSM handler for state InitTX
   async fn handle_init_tx(&mut self, ev: Evento) {
     println!("init-tx");
     match ev {
@@ -282,6 +302,7 @@ impl Sessao {
   }    
 }
 
+  /// FSM handler for state FinishTx
   async fn handle_finish_tx(&mut self, ev: Evento) {
     println!("finish-tx");
     match ev {
@@ -312,6 +333,7 @@ impl Sessao {
     }
   }
 
+  /// FSM handler for state TX
   async fn handle_tx(&mut self, ev: Evento) {
     println!("tx");
     match ev {
