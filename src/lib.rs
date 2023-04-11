@@ -8,7 +8,7 @@ use tokio::net::UdpSocket;
 use std::fs;
 use bytes::BytesMut;
 use std::io;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 mod msg;
 
 use msg::Codec;
@@ -16,12 +16,10 @@ use msg::Codec;
 #[derive(Debug)]
 struct Sessao {
   sock: UdpSocket,
-  server: String,
-  port: u16,
-  cur_port: u16,
+  server: SocketAddr,
+  tid: bool,
   buffer: BytesMut,
   seqno: u16,
-  finished: bool,
   timeout: u16,
   retries: u16,
   max_retries: u16,
@@ -51,14 +49,19 @@ enum Estado {
 
 impl Sessao {
   async fn new(server:&str, port:u16, timeout: u16, retries: u16) -> Self {
+    let ip:Vec<u8> = server.split('.')
+                           .map(|c| c.parse::<u8>().expect("IP inválido"))
+                           .collect();
+    if ip.len() != 4 {
+      panic!("ip inválido");
+    }                          
+    let ip = Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]);
     Sessao {
       sock: UdpSocket::bind("0.0.0.0:0").await.expect("ao criar socket UDP"),
-      server: server.to_owned(),
-      port: port,
-      cur_port: 0,
+      server: SocketAddr::new(IpAddr::V4(ip), port),
+      tid: false,
       buffer: BytesMut::new(),
       seqno: 1,
-      finished: false,
       timeout: timeout,
       retries: 0,
       max_retries: retries,
@@ -101,15 +104,11 @@ impl Sessao {
     if let Some(req) = msg::Requisicao::new_wrq(fname, msg::Modo::Octet) {
       let mesg = req.serialize();
       println!("wrq: {:?}", mesg);
-      let n = self.sock.send_to(&mesg, self.get_server_addr(self.port)).await;
+      let n = self.sock.send_to(&mesg, self.server).await;
       self.buffer.extend_from_slice(data);
       self.estado = Estado::InitTX;
       self.run().await;
     }
-  }
-
-  fn get_server_addr(&self, port: u16) -> String {
-    format!("{}:{}", self.server, port)
   }
 
   async fn receive(&mut self, fname: &str) -> Option<()>{
@@ -119,7 +118,7 @@ impl Sessao {
     if let Some(req) = msg::Requisicao::new_rrq(fname, msg::Modo::Octet) {
         let mesg = req.serialize();
         println!("rrq: {:?}", mesg);
-        let n = self.sock.send_to(&mesg, self.get_server_addr(self.port)).await;
+        let n = self.sock.send_to(&mesg, self.server).await;
         self.estado = Estado::RX;
         self.run().await;
         Some(())
@@ -142,10 +141,11 @@ impl Sessao {
         if let Ok((len,addr)) = val {
           println!("Rx: val={:?}", (len,addr));
           // TODO: conferir o ip do servidor
-          if self.cur_port == 0 {
-            self.cur_port = addr.port();
+          if ! self.tid {
+            self.tid = true;
+            self.server.set_port(addr.port());
           }
-          if self.cur_port == addr.port() {
+          if self.server == addr {
             let msg = buf[..len].to_vec();
             return Evento::Msg(msg);
           }
@@ -175,7 +175,7 @@ impl Sessao {
                         }
                         if let Some(resp) = msg::ACK::new(data.block) {
                             let mesg = resp.serialize();                                
-                            self.sock.send_to(&mesg, self.get_server_addr(self.cur_port)).await;
+                            self.sock.send_to(&mesg, self.server).await;
                         }                        
                     }
                     msg::Mensagem::Err(err) => {
@@ -203,7 +203,7 @@ impl Sessao {
     let body_len = self.get_chunk_size();
     if let Some(data) = msg::DATA::new(self.seqno, &self.buffer[..body_len]) {
       let mesg = data.serialize();                                
-      self.sock.send_to(&mesg, self.get_server_addr(self.cur_port)).await;
+      self.sock.send_to(&mesg, self.server).await;
       return Some(body_len < msg::DATA::SIZE);
     }
     None
