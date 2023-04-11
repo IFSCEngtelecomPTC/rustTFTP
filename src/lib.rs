@@ -204,11 +204,29 @@ impl Sessao {
     None
   }    
   
+  async fn retransmit(&mut self) {
+    if self.retries < self.max_retries {
+      self.retries+=1;
+      self.send_data().await;
+    } else {
+      self.estado = Estado::Finish;
+    }
+  }
+
+  async fn send_next(&mut self) {
+    match self.send_data().await {
+      Some(true) => self.estado = Estado::FinishTX,
+      Some(false) => self.estado = Estado::TX,
+      None => self.estado = Estado::Finish
+    }
+  }
+
   async fn handle_init_tx(&mut self, ev: Evento) {
     println!("init-tx");
     match ev {
       Evento::Timeout => {
-          self.estado = Estado::Finish;
+        // aborts
+        self.estado = Estado::Finish;
       }
       Evento::Msg(buffer) => {
           if let Some(mesg) = msg::from_bytes(buffer) {
@@ -216,12 +234,9 @@ impl Sessao {
                   msg::Mensagem::Ack(ack) => {
                       if ack.block == 0 {
                           self.seqno = 1;
+                          self.retries = 0;
+                          self.send_next().await;
                                                     
-                          match self.send_data().await {
-                            Some(true) => self.estado = Estado::FinishTX,
-                            Some(false) => self.estado = Estado::TX,
-                            None => self.estado = Estado::Finish
-                          }
                       } else {
                         self.estado = Estado::Finish;
                       }                   
@@ -246,7 +261,7 @@ impl Sessao {
     println!("finish-tx");
     match ev {
       Evento::Timeout => {
-          self.send_data().await;
+        self.retransmit().await;
       }
       Evento::Msg(buffer) => {
           if let Some(mesg) = msg::from_bytes(buffer) {
@@ -276,7 +291,8 @@ impl Sessao {
     println!("tx");
     match ev {
       Evento::Timeout => {
-        self.send_data().await;
+        // retransmits a block
+        self.retransmit().await;
       }
       Evento::Msg(buffer) => {
           if let Some(mesg) = msg::from_bytes(buffer) {
@@ -284,18 +300,13 @@ impl Sessao {
                   msg::Mensagem::Ack(ack) => {
                       if ack.block == self.seqno {
                           self.seqno += 1;
+                          self.retries = 0;
                           self.buffer.split_to(self.get_chunk_size());
-                          
-                          match self.send_data().await {
-                            Some(true) => self.estado = Estado::FinishTX,
-                            Some(false) => self.estado = Estado::TX,
-                            None => self.estado = Estado::Finish
-                          }
+                          self.send_next().await;
                       }                    
                   }
                   msg::Mensagem::Err(err) => {
                       self.estado = Estado::Finish;
-
                   }
                   _ => {
 
