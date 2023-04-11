@@ -48,25 +48,36 @@ enum Estado {
 }
 
 impl Sessao {
-  async fn new(server:&str, port:u16, timeout: u16, retries: u16) -> Self {
-    let ip:Vec<u8> = server.split('.')
-                           .map(|c| c.parse::<u8>().expect("IP inválido"))
-                           .collect();
-    if ip.len() != 4 {
-      panic!("ip inválido");
-    }                          
-    let ip = Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]);
-    Sessao {
-      sock: UdpSocket::bind("0.0.0.0:0").await.expect("ao criar socket UDP"),
-      server: SocketAddr::new(IpAddr::V4(ip), port),
-      tid: false,
-      buffer: BytesMut::new(),
-      seqno: 1,
-      timeout: timeout,
-      retries: 0,
-      max_retries: retries,
-      estado: Estado::Idle
+  async fn new(server:&str, port:u16, timeout: u16, retries: u16) -> Option<Self> {
+    if let Some(ip) = Sessao::parse_ip(server) {
+      return Some(Sessao {
+        sock: UdpSocket::bind("0.0.0.0:0").await.expect("ao criar socket UDP"),
+        server: SocketAddr::new(IpAddr::V4(ip), port),
+        tid: false,
+        buffer: BytesMut::new(),
+        seqno: 1,
+        timeout: timeout,
+        retries: 0,
+        max_retries: retries,
+        estado: Estado::Idle
+      });
     }
+    None
+  }
+
+  fn parse_ip(ip: &str) -> Option<Ipv4Addr> {
+    let ip:Vec<_> = ip.split('.')
+                           .map(|c| c.parse::<u8>())
+                           .collect();
+    if ! ip.iter().any(|x| x.is_err()) {
+      if ip.len() == 4 {
+        let ip:Vec<_> = ip.into_iter()
+                          .map(|x| x.unwrap())
+                          .collect();
+        return Some(Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]));
+      }
+    }
+    None
   }
 
   fn is_finished(&self) -> bool {
@@ -343,20 +354,22 @@ impl ClienteTFTP {
     async fn do_send(&self, fname: &str) -> Option<Sessao> {
         if let Ok(data) = fs::read(fname) {
             
-            let mut sessao = Sessao::new(&self.server, self.port, 1, 3).await;
-            sessao.send(fname, &data).await;                                
+            if let Some(mut sessao) = Sessao::new(&self.server, self.port, 1, 3).await {
+              sessao.send(fname, &data).await;                                
 
-            Some(sessao)
-        } else {
-            None
+              return Some(sessao);
+            }
         }
+        None
       }
       
       async fn do_receive(&self, fname: &str) -> Option<Sessao> {
-        let mut sessao = Sessao::new(&self.server, self.port, 1, 3).await;
-        sessao.receive(fname).await;
+        if let Some(mut sessao) = Sessao::new(&self.server, self.port, 1, 3).await {
+          sessao.receive(fname).await;
 
-        Some(sessao)
+          return Some(sessao);
+        }
+        None
       }
 
     pub fn envia(&self, fname: &str) {
