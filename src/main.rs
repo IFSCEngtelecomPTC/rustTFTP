@@ -1,8 +1,5 @@
 use clap::Parser;
-use tftp::ClienteTFTP;
-mod msg;
-use std::error::Error;
-use std::fs;
+use tftp::{ClienteTFTP,Status};
 
 /// Um pequeno cliente TFTP experimental
 #[derive(Parser, Debug)]
@@ -21,7 +18,10 @@ fn main() {
    let args = Args::parse();
    let cliente = ClienteTFTP::new(&args.server, args.port);
    match cliente.recebe("teste", "teste") {
-      Ok(_) => println!("Arquivo recebido e gravado"),
-      Err(e) => println!("Erro: {:?}", e)
+      Status::OK => println!("Arquivo recebido e gravado"),
+      Status::Error(e) => println!("Erro: {:?}", e),
+      Status::Unknown => println!("Erro desconhecido"),
+      Status::Timeout => println!("Timeout"),
+      Status::MaxRetriesExceeded => println!("retransmissões excedidas")
    }
 }

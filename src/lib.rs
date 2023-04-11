@@ -1,17 +1,20 @@
-use std::collections::HashMap;
-#[feature(rt)]
 use std::time::Duration;
-//use std::fmt;
-use tokio::{runtime, sync::oneshot};
-use tokio::sync::oneshot::{Receiver,Sender};
 use tokio::net::UdpSocket;
 use std::fs;
 use bytes::BytesMut;
-use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 mod msg;
 
 use msg::Codec;
+
+#[derive(Debug)]
+pub enum Status {
+  OK,
+  Timeout,
+  MaxRetriesExceeded,
+  Error(u16),
+  Unknown
+}
 
 #[derive(Debug)]
 struct Sessao {
@@ -23,7 +26,8 @@ struct Sessao {
   timeout: u16,
   retries: u16,
   max_retries: u16,
-  estado: Estado
+  estado: Estado,
+  status: Status
 }
 
 #[derive(Debug)]
@@ -59,7 +63,8 @@ impl Sessao {
         timeout: timeout,
         retries: 0,
         max_retries: retries,
-        estado: Estado::Idle
+        estado: Estado::Idle,
+        status: Status::OK
       });
     }
     None
@@ -172,6 +177,7 @@ impl Sessao {
     match ev {
         Evento::Timeout => {
             self.estado = Estado::Finish;
+            self.status = Status::Timeout;
         }
         Evento::Msg(buffer) => {
             if let Some(mesg) = msg::from_bytes(buffer) {
@@ -191,6 +197,7 @@ impl Sessao {
                     }
                     msg::Mensagem::Err(err) => {
                         self.estado = Estado::Finish;
+                        self.status = Status::Error(err.err_code);
 
                     }
                     _ => {
@@ -226,6 +233,7 @@ impl Sessao {
       self.send_data().await;
     } else {
       self.estado = Estado::Finish;
+      self.status = Status::MaxRetriesExceeded;
     }
   }
 
@@ -243,6 +251,7 @@ impl Sessao {
       Evento::Timeout => {
         // aborts
         self.estado = Estado::Finish;
+        self.status = Status::Timeout;
       }
       Evento::Msg(buffer) => {
           if let Some(mesg) = msg::from_bytes(buffer) {
@@ -259,7 +268,7 @@ impl Sessao {
                   }
                   msg::Mensagem::Err(err) => {
                       self.estado = Estado::Finish;
-
+                      self.status = Status::Error(err.err_code)
                   }
                   _ => {
 
@@ -289,7 +298,7 @@ impl Sessao {
                   }
                   msg::Mensagem::Err(err) => {
                       self.estado = Estado::Finish;
-
+                      self.status = Status::Error(err.err_code)
                   }
                   _ => {
 
@@ -323,6 +332,7 @@ impl Sessao {
                   }
                   msg::Mensagem::Err(err) => {
                       self.estado = Estado::Finish;
+                      self.status = Status::Error(err.err_code)
                   }
                   _ => {
 
@@ -372,7 +382,7 @@ impl ClienteTFTP {
         None
       }
 
-    pub fn envia(&self, fname: &str) {
+    pub fn envia(&self, fname: &str) -> Status {
         let mut rt = tokio::runtime::Runtime::new().expect("");
         // let mut rt = tokio::runtime::Builder::new_multi_thread()
         // .worker_threads(1)
@@ -380,10 +390,15 @@ impl ClienteTFTP {
         // .build()
         // .expect("Não conseguiu iniciar runtime !");
     
-        let r = rt.block_on(self.do_send(fname));    
+        if let Some(sessao) = rt.block_on(self.do_send(fname)) {
+          sessao.status
+        } else {
+          Status::Unknown
+        }
+
     }
 
-    pub fn recebe(&self, fname: &str, local: &str) -> io::Result<()>{
+    pub fn recebe(&self, fname: &str, local: &str) -> Status {
         let mut rt = tokio::runtime::Runtime::new().expect("");
         // let mut rt = tokio::runtime::Builder::new_multi_thread()
         // .worker_threads(1)
@@ -393,9 +408,11 @@ impl ClienteTFTP {
     
         let r = rt.block_on(self.do_receive(fname));
         if let Some(sessao) = r {
-          fs::write("local", sessao.buffer)?;
+          fs::write("local", sessao.buffer);
+          sessao.status
+        } else {
+          Status::Unknown
         }
-        Ok(())
     }
 }
 
