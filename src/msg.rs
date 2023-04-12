@@ -44,14 +44,6 @@ pub enum Modo {
 }
 
 impl Modo {
-    fn as_str0(&self) -> String {
-        String::from(match self {
-            Modo::Mail => "mail",
-            Modo::Netascii => "netascii",
-            Modo::Octet => "octet"
-        })
-    }
-
     fn as_str(&self) -> &str {
         match self {
             Modo::Mail => "mail",

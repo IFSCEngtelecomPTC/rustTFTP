@@ -130,10 +130,14 @@ impl Sessao {
     if let Some(req) = msg::Requisicao::new_wrq(fname, msg::Modo::Octet) {
       let mesg = req.serialize();
       println!("wrq: {:?}", mesg);
-      let n = self.sock.send_to(&mesg, self.server).await;
-      self.buffer.extend_from_slice(data);
-      self.estado = Estado::InitTX;
-      self.run().await;
+      if let Ok(_n) = self.sock.send_to(&mesg, self.server).await {
+        self.buffer.extend_from_slice(data);
+        self.estado = Estado::InitTX;
+        self.run().await;
+      } else {
+        self.estado = Estado::Finish;
+        self.status = Status::Unknown;
+      }
     }
   }
 
@@ -146,14 +150,15 @@ impl Sessao {
     if let Some(req) = msg::Requisicao::new_rrq(fname, msg::Modo::Octet) {
         let mesg = req.serialize();
         println!("rrq: {:?}", mesg);
-        let n = self.sock.send_to(&mesg, self.server).await;
-        self.estado = Estado::RX;
-        self.run().await;
-        Some(())
-    } else {
-        None
+        if let Ok(_n) = self.sock.send_to(&mesg, self.server).await {
+          self.estado = Estado::RX;
+          self.run().await;
+          return Some(());
+        }
     }
-    
+    self.estado = Estado::Finish;
+    self.status = Status::Unknown;
+    None        
   }
 
   /// waits for an event, and return it
@@ -206,7 +211,10 @@ impl Sessao {
                         }
                         if let Some(resp) = msg::ACK::new(data.block) {
                             let mesg = resp.serialize();                                
-                            self.sock.send_to(&mesg, self.server).await;
+                            if let Err(_e) = self.sock.send_to(&mesg, self.server).await {
+                              self.estado = Estado::Finish;
+                              self.status = Status::Unknown;
+                            }
                         }                        
                     }
                     msg::Mensagem::Err(err) => {
@@ -233,12 +241,16 @@ impl Sessao {
   }
 
   /// sends a block of data ... the first available chunk in buffer
-  async fn send_data(&self) -> Option<bool> {
+  async fn send_data(&mut self) -> Option<bool> {
     let body_len = self.get_chunk_size();
     if let Some(data) = msg::DATA::new(self.seqno, &self.buffer[..body_len]) {
       let mesg = data.serialize();                                
-      self.sock.send_to(&mesg, self.server).await;
-      return Some(body_len < msg::DATA::SIZE);
+      if let Err(_e) = self.sock.send_to(&mesg, self.server).await {
+        self.estado = Estado::Finish;
+        self.status = Status::Unknown;        
+      } else {
+        return Some(body_len < msg::DATA::SIZE);
+      }
     }
     None
   }    
@@ -348,7 +360,7 @@ impl Sessao {
                       if ack.block == self.seqno {
                           self.seqno += 1;
                           self.retries = 0;
-                          self.buffer.split_to(self.get_chunk_size());
+                          let _chunk = self.buffer.split_to(self.get_chunk_size());
                           self.send_next().await;
                       }                    
                   }
@@ -383,14 +395,11 @@ impl ClienteTFTP {
         }
     }
 
-    async fn do_send(&self, fname: &str) -> Option<Sessao> {
-        if let Ok(data) = fs::read(fname) {
-            
-            if let Some(mut sessao) = Sessao::new(&self.server, self.port, 1, 3).await {
-              sessao.send(fname, &data).await;                                
+    async fn do_send(&self, fname: &str, data: &[u8]) -> Option<Sessao> {
+        if let Some(mut sessao) = Sessao::new(&self.server, self.port, 1, 3).await {
+          sessao.send(fname, &data).await;                                
 
-              return Some(sessao);
-            }
+          return Some(sessao);
         }
         None
       }
@@ -404,15 +413,16 @@ impl ClienteTFTP {
         None
       }
 
-    pub fn envia(&self, fname: &str) -> Status {
-        let mut rt = tokio::runtime::Runtime::new().expect("");
+    pub fn envia(&self, fname: &str, rname: &str) -> Status {
+        let rt = tokio::runtime::Runtime::new().expect("");
         // let mut rt = tokio::runtime::Builder::new_multi_thread()
         // .worker_threads(1)
         // .enable_all()
         // .build()
         // .expect("Não conseguiu iniciar runtime !");
     
-        if let Some(sessao) = rt.block_on(self.do_send(fname)) {
+        let data = fs::read(fname).expect("unable to read local file");
+        if let Some(sessao) = rt.block_on(self.do_send(rname, &data)) {
           sessao.status
         } else {
           Status::Unknown
@@ -421,7 +431,7 @@ impl ClienteTFTP {
     }
 
     pub fn recebe(&self, fname: &str, local: &str) -> Status {
-        let mut rt = tokio::runtime::Runtime::new().expect("");
+        let rt = tokio::runtime::Runtime::new().expect("");
         // let mut rt = tokio::runtime::Builder::new_multi_thread()
         // .worker_threads(1)
         // .enable_all()
@@ -430,7 +440,7 @@ impl ClienteTFTP {
     
         let r = rt.block_on(self.do_receive(fname));
         if let Some(sessao) = r {
-          fs::write("local", sessao.buffer);
+          fs::write(local, sessao.buffer).expect("unable to save local file");
           sessao.status
         } else {
           Status::Unknown
