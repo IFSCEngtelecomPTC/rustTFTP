@@ -3,9 +3,11 @@ use tokio::net::UdpSocket;
 use std::fs;
 use bytes::BytesMut;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-mod msg;
+use std::str::FromStr;
 
-use msg::Codec;
+use tftp2::spec::{mensagem::Msg, *};
+use prost;
+use prost::Message;
 
 // Include the `items` module, which is generated from items.proto.
 // It is important to maintain the same structure as in the proto.
@@ -14,8 +16,6 @@ pub mod tftp2 {
       include!(concat!(env!("OUT_DIR"), "/tftp2.rs"));
   }
 }
-
-use tftp2::spec;
 
 #[derive(Debug)]
 pub enum Status {
@@ -45,7 +45,7 @@ struct Sessao {
 #[derive(Eq)]
 #[derive(Hash)]
 enum Evento {
-  Msg(Vec<u8>),
+  Msg(bytes::BytesMut),
   Timeout,
   Nada
 }
@@ -87,18 +87,23 @@ impl Sessao {
   /// converts a string with an IP adress to a Ipv4Addr
   /// is there a simpler way ???
   fn parse_ip(ip: &str) -> Option<Ipv4Addr> {
-    let ip:Vec<_> = ip.split('.')
-                           .map(|c| c.parse::<u8>())
-                           .collect();
-    if ! ip.iter().any(|x| x.is_err()) {
-      if ip.len() == 4 {
-        let ip:Vec<_> = ip.into_iter()
-                          .map(|x| x.unwrap())
-                          .collect();
-        return Some(Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]));
-      }
+    if let Ok(ip) = Ipv4Addr::from_str(ip) {
+      Some(ip)
+    } else {
+      None
     }
-    None
+    // let ip:Vec<_> = ip.split('.')
+    //                        .map(|c| c.parse::<u8>())
+    //                        .collect();
+    // if ! ip.iter().any(|x| x.is_err()) {
+    //   if ip.len() == 4 {
+    //     let ip:Vec<_> = ip.into_iter()
+    //                       .map(|x| x.unwrap())
+    //                       .collect();
+    //     return Some(Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]));
+    //   }
+    // }
+    // None
   }
 
   /// just checks if FSM is finished
@@ -131,24 +136,62 @@ impl Sessao {
     }
   }
 
+  /// utility function: generates a Req message. The kind of Req (rrq or wrq)
+  /// is specified in the closure f_enc
+  fn new_req(fname: &str, f_enc: impl FnOnce(Req)->mensagem::Msg) -> Mensagem {
+    let mut msg = Mensagem::default();
+    let mut inner = Req::default();
+   
+    inner.set_mode(Mode::Octet);
+    inner.fname = String::from(fname);
+    msg.msg = Some(f_enc(inner));
+
+    return msg;
+  }
+
+  fn new_ack(block: u32) -> Mensagem {
+    let mut msg = Mensagem::default();
+    let mut inner = Ack::default();
+   
+    inner.block_n = block;
+    msg.msg = Some(Msg::Ack(inner));
+
+    return msg;
+  }
+
+  fn new_data(block: u32, body: &[u8]) -> Mensagem {
+    let mut msg = Mensagem::default();
+    let mut inner = Data::default();
+   
+    inner.block_n = block;
+    inner.message.extend(body);
+    msg.msg = Some(Msg::Data(inner));
+
+    return msg;
+  }
+
   /// starts transmission of a file: sends contents of "data" to a file named "fname"
   async fn send(&mut self, fname: &str, data: &[u8]) {
     if self.estado != Estado::Idle {
         panic!("sessão em uso");
     }
     
-    if let Some(req) = msg::Requisicao::new_wrq(fname, msg::Modo::Octet) {
-      let mesg = req.serialize();
-      println!("wrq: {:?}", mesg);
-      if let Ok(_n) = self.sock.send_to(&mesg, self.server).await {
-        self.buffer.extend_from_slice(data);
-        self.estado = Estado::InitTX;
-        self.run().await;
-      } else {
-        self.estado = Estado::Finish;
-        self.status = Status::Unknown;
-      }
+    // creates a Wrq message
+    let msg = Sessao::new_req(fname, |req| mensagem::Msg::Wrq(req));
+
+    // ... and then encodes it
+    let mut buffer = Sessao::encode(msg);
+
+    // finally, sends the message and starts the FSM
+    if let Ok(_n) = self.sock.send_to(&buffer, self.server).await {
+      self.buffer.extend_from_slice(data);
+      self.estado = Estado::InitTX;
+      self.run().await;
+    } else {
+      self.estado = Estado::Finish;
+      self.status = Status::Unknown;
     }
+    
   }
 
   /// starts reception of file "fname".
@@ -157,15 +200,19 @@ impl Sessao {
     if self.estado != Estado::Idle {
         panic!("sessão em uso");
     }
-    if let Some(req) = msg::Requisicao::new_rrq(fname, msg::Modo::Octet) {
-        let mesg = req.serialize();
-        println!("rrq: {:?}", mesg);
-        if let Ok(_n) = self.sock.send_to(&mesg, self.server).await {
-          self.estado = Estado::RX;
-          self.run().await;
-          return Some(());
-        }
+
+    // creates a Rrq message
+    let msg = Sessao::new_req(fname, |req| mensagem::Msg::Rrq(req));
+    // ... and then encodes it
+    let mut buffer = Sessao::encode(msg);
+
+    // finally, sends the message and starts the FSM
+    if let Ok(_n) = self.sock.send_to(&buffer, self.server).await {
+      self.estado = Estado::RX;
+      self.run().await;
+      return Some(());
     }
+
     self.estado = Estado::Finish;
     self.status = Status::Unknown;
     None        
@@ -173,7 +220,7 @@ impl Sessao {
 
   /// waits for an event, and return it
   async fn get_event(&mut self) -> Evento {
-    let mut buf = [0; 1024];
+    let mut buf = bytes::BytesMut::new();
     let f_timeout = tokio::time::sleep(Duration::from_secs(self.timeout as u64));
 
     tokio::select! {
@@ -190,8 +237,7 @@ impl Sessao {
             self.server.set_port(addr.port());
           }
           if self.server == addr {
-            let msg = buf[..len].to_vec();
-            return Evento::Msg(msg);
+            return Evento::Msg(buf);
           }
         }
       }
@@ -209,32 +255,33 @@ impl Sessao {
             self.status = Status::Timeout;
         }
         Evento::Msg(buffer) => {
-            if let Some(mesg) = msg::from_bytes(buffer) {
-                match mesg {
-                    msg::Mensagem::Data(data) => {
-                        if data.block == self.seqno {
-                            self.seqno += 1;
-                            self.buffer.extend_from_slice(&data.body);
-                            if data.body.len() < msg::DATA::SIZE {
-                                self.estado = Estado::Finish;
-                            }
-                        }
-                        if let Some(resp) = msg::ACK::new(data.block) {
-                            let mesg = resp.serialize();                                
-                            if let Err(_e) = self.sock.send_to(&mesg, self.server).await {
-                              self.estado = Estado::Finish;
-                              self.status = Status::Unknown;
-                            }
-                        }                        
-                    }
-                    msg::Mensagem::Err(err) => {
-                        self.estado = Estado::Finish;
-                        self.status = Status::Error(err.err_code);
+            if let Ok(msg) = Mensagem::decode(buffer) {
+                if let Some(msg) = msg.msg {
+                  match msg {
+                      Msg::Data(data) => {
+                          if data.block_n as u16 == self.seqno {
+                              self.seqno += 1;
+                              self.buffer.extend_from_slice(&data.message);
+                              if data.message.len() < ClienteTFTP::DATA_SIZE {
+                                  self.estado = Estado::Finish;
+                              }
+                          }
+                          let resp = Sessao::new_ack(data.block_n);
+                          let mut buffer = Sessao::encode(resp);
+                          if let Err(_e) = self.sock.send_to(&buffer, self.server).await {
+                            self.estado = Estado::Finish;
+                            self.status = Status::Unknown;
+                          }
+                      }
+                      Msg::Error(err) => {
+                          self.estado = Estado::Finish;
+                          self.status = Status::Error(err.errorcode as u16);
 
-                    }
-                    _ => {
+                      }
+                      _ => {
 
-                    }
+                      }
+                  }
                 }
             }
         }
@@ -247,20 +294,25 @@ impl Sessao {
 
   /// calculates current chunk size
   fn get_chunk_size(&self) -> usize {
-    msg::DATA::SIZE.min(self.buffer.len())
+    ClienteTFTP::DATA_SIZE.min(self.buffer.len())
+  }
+
+  fn encode(msg: Mensagem) -> bytes::BytesMut {
+    let mut buffer = bytes::BytesMut::new();
+    msg.encode(&mut buffer);                                
+    buffer
   }
 
   /// sends a block of data ... the first available chunk in buffer
   async fn send_data(&mut self) -> Option<bool> {
     let body_len = self.get_chunk_size();
-    if let Some(data) = msg::DATA::new(self.seqno, &self.buffer[..body_len]) {
-      let mesg = data.serialize();                                
-      if let Err(_e) = self.sock.send_to(&mesg, self.server).await {
-        self.estado = Estado::Finish;
-        self.status = Status::Unknown;        
-      } else {
-        return Some(body_len < msg::DATA::SIZE);
-      }
+    let data = Sessao::new_data(self.seqno as u32, &self.buffer[..body_len]);
+    let mut buffer = Sessao::encode(data);
+    if let Err(_e) = self.sock.send_to(&buffer, self.server).await {
+      self.estado = Estado::Finish;
+      self.status = Status::Unknown;        
+    } else {
+      return Some(body_len < ClienteTFTP::DATA_SIZE);
     }
     None
   }    
@@ -296,33 +348,34 @@ impl Sessao {
         self.status = Status::Timeout;
       }
       Evento::Msg(buffer) => {
-          if let Some(mesg) = msg::from_bytes(buffer) {
-              match mesg {
-                  msg::Mensagem::Ack(ack) => {
-                      if ack.block == 0 {
-                          self.seqno = 1;
-                          self.retries = 0;
-                          self.send_next().await;
-                                                    
-                      } else {
-                        self.estado = Estado::Finish;
-                      }                   
-                  }
-                  msg::Mensagem::Err(err) => {
-                      self.estado = Estado::Finish;
-                      self.status = Status::Error(err.err_code)
-                  }
-                  _ => {
+        if let Ok(msg) = Mensagem::decode(buffer) {
+          if let Some(msg) = msg.msg {
+            match msg {
+                Msg::Ack(ack) => {
+                  if ack.block_n == 0 {
+                      self.seqno = 1;
+                      self.retries = 0;
+                      self.send_next().await;                                                    
+                  } else {
+                    self.estado = Estado::Finish;
+                  } 
+                }                  
+                Msg::Error(err) => {
+                    self.estado = Estado::Finish;
+                    self.status = Status::Error(err.errorcode as u16)
+                }
+                _ => {
 
-                  }
+                }
               }
           }
+        }
       }
       _ => {
-        println!("Alguma outra coisa ...");
-      }
-  }    
-}
+        println!("evento desconhecido");
+      }    
+    }
+  }
 
   /// FSM handler for state FinishTx
   async fn handle_finish_tx(&mut self, ev: Evento) {
@@ -332,22 +385,24 @@ impl Sessao {
         self.retransmit().await;
       }
       Evento::Msg(buffer) => {
-          if let Some(mesg) = msg::from_bytes(buffer) {
-              match mesg {
-                  msg::Mensagem::Ack(ack) => {
-                      if ack.block == self.seqno {
-                        self.estado = Estado::Finish;
-                      }                    
-                  }
-                  msg::Mensagem::Err(err) => {
-                      self.estado = Estado::Finish;
-                      self.status = Status::Error(err.err_code)
-                  }
-                  _ => {
+        if let Ok(msg) = Mensagem::decode(buffer) {
+          if let Some(msg) = msg.msg {
+            match msg {
+                Msg::Ack(ack) => {
+                  if ack.block_n == self.seqno as u32 {
+                    self.estado = Estado::Finish;
+                  }                    
+                }
+                Msg::Error(err) => {
+                  self.estado = Estado::Finish;
+                  self.status = Status::Error(err.errorcode as u16)
+                }
+                _ => {
 
-                  }
-              }
+                }
+            }
           }
+        } 
       }
       _ => {
         println!("Alguma outra coisa ...");
@@ -364,25 +419,27 @@ impl Sessao {
         self.retransmit().await;
       }
       Evento::Msg(buffer) => {
-          if let Some(mesg) = msg::from_bytes(buffer) {
-              match mesg {
-                  msg::Mensagem::Ack(ack) => {
-                      if ack.block == self.seqno {
-                          self.seqno += 1;
-                          self.retries = 0;
-                          let _chunk = self.buffer.split_to(self.get_chunk_size());
-                          self.send_next().await;
-                      }                    
-                  }
-                  msg::Mensagem::Err(err) => {
-                      self.estado = Estado::Finish;
-                      self.status = Status::Error(err.err_code)
-                  }
-                  _ => {
+        if let Ok(msg) = Mensagem::decode(buffer) {
+          if let Some(msg) = msg.msg {
+            match msg {
+                Msg::Ack(ack) => {
+                    if ack.block_n == self.seqno as u32{
+                        self.seqno += 1;
+                        self.retries = 0;
+                        let _chunk = self.buffer.split_to(self.get_chunk_size());
+                        self.send_next().await;
+                    }                    
+                }
+                Msg::Error(err) => {
+                    self.estado = Estado::Finish;
+                    self.status = Status::Error(err.errorcode as u16)
+                }
+                _ => {
 
-                  }
+                }
               }
           }
+       }
       }
       _ => {
         println!("Alguma outra coisa ...");
@@ -398,6 +455,8 @@ pub struct ClienteTFTP {
 }
 
 impl ClienteTFTP {
+    const DATA_SIZE:usize = 512;
+
     pub fn new(server: &str, port: u16) -> Self {
         ClienteTFTP {
             server: server.to_owned(),
@@ -457,18 +516,3 @@ impl ClienteTFTP {
         }
     }
 }
-
-
-// async fn talk(server:&str, port: u16) -> io::Result<()> {
-//     let sock = UdpSocket::bind("0.0.0.0:0").await?;
-//     let msg:Vec<u8> = vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee];
-//     let addr = format!("{}:{}", server, port);
-
-//     for k in 0..10 {
-//       let _n = sock.send_to(&msg, &addr).await?;
-//       let mut buffer = vec![0u8; 1024];
-//       let (_rx, _peer) = sock.recv_from(&mut buffer).await?;
-//     }
-
-//     Ok(())
-// }
