@@ -3,9 +3,9 @@ name = "tftp"
 version = "0.1.0"
 edition = "2021"
 
-# [[bin]]
-# name = "fsm"
-# path = "src/fsm/ideias-async.rs"
+[[bin]]
+name = "demo"
+path = "src/demo/main.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
