@@ -295,38 +295,37 @@ impl Sessao {
         }
         Evento::Msg(buffer) => {
             if let Ok(msg) = Mensagem::decode(buffer) {
-                if let Some(msg) = msg.msg {
-                  match msg {
-                      Msg::Data(data) => {
-                          if data.block_n == self.seqno {
-                              if self.seqno < 65535 {
-                                self.seqno += 1;
-                                self.buffer.extend_from_slice(&data.message);
-                                if data.message.len() < ClienteTFTP::DATA_SIZE {
-                                    self.estado = Estado::Finish;
-                                }
-                              } else {
-                                self.estado = Estado::Finish;
-                                self.status = Status::Unknown;
+                match msg.msg {
+                    Some(Msg::Data(data)) => {
+                        if data.block_n == self.seqno {
+                            if self.seqno < 65535 {
+                              self.seqno += 1;
+                              self.buffer.extend_from_slice(&data.message);
+                              if data.message.len() < ClienteTFTP::DATA_SIZE {
+                                  self.estado = Estado::Finish;
                               }
-                          }
-                          let resp = Mensagem::new_ack(data.block_n);
-                          let mut buffer = resp.serialize();
-                          if let Err(_e) = self.sock.send_to(&buffer, self.server).await {
-                            self.estado = Estado::Finish;
-                            self.status = Status::Unknown;
-                          }
-                      }
-                      Msg::Error(err) => {
+                            } else {
+                              self.estado = Estado::Finish;
+                              self.status = Status::Unknown;
+                            }
+                        }
+                        let resp = Mensagem::new_ack(data.block_n);
+                        let mut buffer = resp.serialize();
+                        if let Err(_e) = self.sock.send_to(&buffer, self.server).await {
                           self.estado = Estado::Finish;
-                          self.status = Status::Error(err.errorcode as u16);
+                          self.status = Status::Unknown;
+                        }
+                    }
+                    Some(Msg::Error(err)) => {
+                        self.estado = Estado::Finish;
+                        self.status = Status::Error(err.errorcode as u16);
 
-                      }
-                      _ => {
+                    }
+                    _ => {
 
-                      }
-                  }
+                    }
                 }
+                
             }
         }
         _ => {
@@ -394,26 +393,25 @@ impl Sessao {
       }
       Evento::Msg(buffer) => {
         if let Ok(msg) = Mensagem::decode(buffer) {
-          if let Some(msg) = msg.msg {
-            match msg {
-                Msg::Ack(ack) => {
-                  if ack.block_n == 0 {
-                      self.seqno = 1;
-                      self.retries = 0;
-                      self.send_next().await;                                                    
-                  } else {
-                    self.estado = Estado::Finish;
-                  } 
-                }                  
-                Msg::Error(err) => {
-                    self.estado = Estado::Finish;
-                    self.status = Status::Error(err.errorcode as u16)
-                }
-                _ => {
-
-                }
+          match msg.msg {
+              Some(Msg::Ack(ack)) => {
+                if ack.block_n == 0 {
+                    self.seqno = 1;
+                    self.retries = 0;
+                    self.send_next().await;                                                    
+                } else {
+                  self.estado = Estado::Finish;
+                } 
+              }                  
+              Some(Msg::Error(err)) => {
+                  self.estado = Estado::Finish;
+                  self.status = Status::Error(err.errorcode as u16)
               }
-          }
+              _ => {
+
+              }
+            }
+          
         }
       }
       _ => {
@@ -431,22 +429,20 @@ impl Sessao {
       }
       Evento::Msg(buffer) => {
         if let Ok(msg) = Mensagem::decode(buffer) {
-          if let Some(msg) = msg.msg {
-            match msg {
-                Msg::Ack(ack) => {
-                  if ack.block_n == self.seqno as u32 {
-                    self.estado = Estado::Finish;
-                  }                    
-                }
-                Msg::Error(err) => {
+          match msg.msg {
+              Some(Msg::Ack(ack)) => {
+                if ack.block_n == self.seqno as u32 {
                   self.estado = Estado::Finish;
-                  self.status = Status::Error(err.errorcode as u16)
-                }
-                _ => {
+                }                    
+              }
+              Some(Msg::Error(err)) => {
+                self.estado = Estado::Finish;
+                self.status = Status::Error(err.errorcode as u16)
+              }
+              _ => {
 
-                }
-            }
-          }
+              }
+          }        
         } 
       }
       _ => {
@@ -465,30 +461,28 @@ impl Sessao {
       }
       Evento::Msg(buffer) => {
         if let Ok(msg) = Mensagem::decode(buffer) {
-          if let Some(msg) = msg.msg {
-            match msg {
-                Msg::Ack(ack) => {
-                    if ack.block_n == self.seqno {
-                      if self.seqno < 65535 {
-                        self.seqno += 1;
-                        self.retries = 0;
-                        let _chunk = self.buffer.split_to(self.get_chunk_size());
-                        self.send_next().await;
-                      } else {
-                        self.estado = Estado::Finish;
-                        self.status = Status::Unknown;
-                      }
-                    }                    
-                }
-                Msg::Error(err) => {
-                    self.estado = Estado::Finish;
-                    self.status = Status::Error(err.errorcode as u16)
-                }
-                _ => {
-
-                }
+          match msg.msg {
+              Some(Msg::Ack(ack)) => {
+                  if ack.block_n == self.seqno {
+                    if self.seqno < 65535 {
+                      self.seqno += 1;
+                      self.retries = 0;
+                      let _chunk = self.buffer.split_to(self.get_chunk_size());
+                      self.send_next().await;
+                    } else {
+                      self.estado = Estado::Finish;
+                      self.status = Status::Unknown;
+                    }
+                  }                    
               }
-          }
+              Some(Msg::Error(err)) => {
+                  self.estado = Estado::Finish;
+                  self.status = Status::Error(err.errorcode as u16)
+              }
+              _ => {
+
+              }
+            }          
        }
       }
       _ => {
