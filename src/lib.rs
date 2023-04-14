@@ -32,7 +32,7 @@ struct Sessao {
   server: SocketAddr,
   tid: bool,
   buffer: BytesMut,
-  seqno: u16,
+  seqno: u32,
   timeout: u16,
   retries: u16,
   max_retries: u16,
@@ -259,11 +259,16 @@ impl Sessao {
                 if let Some(msg) = msg.msg {
                   match msg {
                       Msg::Data(data) => {
-                          if data.block_n as u16 == self.seqno {
-                              self.seqno += 1;
-                              self.buffer.extend_from_slice(&data.message);
-                              if data.message.len() < ClienteTFTP::DATA_SIZE {
-                                  self.estado = Estado::Finish;
+                          if data.block_n == self.seqno {
+                              if self.seqno < 65535 {
+                                self.seqno += 1;
+                                self.buffer.extend_from_slice(&data.message);
+                                if data.message.len() < ClienteTFTP::DATA_SIZE {
+                                    self.estado = Estado::Finish;
+                                }
+                              } else {
+                                self.estado = Estado::Finish;
+                                self.status = Status::Unknown;
                               }
                           }
                           let resp = Sessao::new_ack(data.block_n);
@@ -297,6 +302,7 @@ impl Sessao {
     ClienteTFTP::DATA_SIZE.min(self.buffer.len())
   }
 
+  // utility function to encode a message
   fn encode(msg: Mensagem) -> bytes::BytesMut {
     let mut buffer = bytes::BytesMut::new();
     msg.encode(&mut buffer);                                
@@ -305,15 +311,22 @@ impl Sessao {
 
   /// sends a block of data ... the first available chunk in buffer
   async fn send_data(&mut self) -> Option<bool> {
+    // the size of the next block of data
     let body_len = self.get_chunk_size();
+    // creates a data message
     let data = Sessao::new_data(self.seqno as u32, &self.buffer[..body_len]);
+    // ... and then encodes it
     let mut buffer = Sessao::encode(data);
+    // sends the data message, and updates state of the FSM
     if let Err(_e) = self.sock.send_to(&buffer, self.server).await {
       self.estado = Estado::Finish;
       self.status = Status::Unknown;        
     } else {
+      // if sent the message, then returns true if it was the last message
       return Some(body_len < ClienteTFTP::DATA_SIZE);
     }
+
+    // no message sent: some error (TODO: i still have to propagates it)
     None
   }    
   
@@ -423,11 +436,16 @@ impl Sessao {
           if let Some(msg) = msg.msg {
             match msg {
                 Msg::Ack(ack) => {
-                    if ack.block_n == self.seqno as u32{
+                    if ack.block_n == self.seqno {
+                      if self.seqno < 65535 {
                         self.seqno += 1;
                         self.retries = 0;
                         let _chunk = self.buffer.split_to(self.get_chunk_size());
                         self.send_next().await;
+                      } else {
+                        self.estado = Estado::Finish;
+                        self.status = Status::Unknown;
+                      }
                     }                    
                 }
                 Msg::Error(err) => {
