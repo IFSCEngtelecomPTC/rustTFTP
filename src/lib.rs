@@ -40,9 +40,6 @@ struct Sessao {
 }
 
 #[derive(Debug)]
-#[derive(PartialEq)]
-#[derive(Eq)]
-#[derive(Hash)]
 enum Evento {
   Msg(bytes::BytesMut),
   Timeout,
