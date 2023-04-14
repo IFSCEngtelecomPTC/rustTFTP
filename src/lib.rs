@@ -61,6 +61,82 @@ enum Estado {
   Finish
 }
 
+pub trait MessageGen {
+  fn new_ack(block: u32) -> Self;
+
+  fn new_data(block: u32, body: &[u8]) -> Self;
+
+  fn new_rrq(fname: &str) -> Self;
+
+  fn new_wrq(fname: &str) -> Self;
+
+  fn new_err(code: u32) -> Self;
+
+  fn serialize(self) -> bytes::BytesMut;
+}
+
+impl MessageGen for Mensagem {
+
+  // utility function to encode a message
+  fn serialize(self) -> bytes::BytesMut {
+    let mut buffer = bytes::BytesMut::new();
+    self.encode(&mut buffer);                                
+    buffer
+  }
+
+
+  /// utility function: generates a Req message. The kind of Req (rrq or wrq)
+  /// is specified in the closure f_enc
+  fn new_rrq(fname: &str) -> Self {
+    let mut msg = Mensagem::default();
+    let mut inner = Req::default();
+   
+    inner.set_mode(Mode::Octet);
+    inner.fname = String::from(fname);
+    msg.msg = Some(Msg::Rrq(inner));
+
+    return msg;
+  }
+
+  fn new_wrq(fname: &str) -> Self {
+    let mut msg = Mensagem::default();
+    let mut inner = Req::default();
+   
+    inner.set_mode(Mode::Octet);
+    inner.fname = String::from(fname);
+    msg.msg = Some(Msg::Wrq(inner));
+
+    return msg;
+  }
+
+  fn new_ack(block: u32) -> Self {
+    let mut msg = Mensagem::default();
+    let mut inner = Ack::default();
+   
+    inner.block_n = block;
+    msg.msg = Some(Msg::Ack(inner));
+
+    return msg;
+  }
+
+  fn new_data(block: u32, body: &[u8]) -> Self {
+    let mut msg = Mensagem::default();
+    let mut inner = Data::default();
+   
+    inner.block_n = block;
+    inner.message.extend(body);
+    msg.msg = Some(Msg::Data(inner));
+
+    return msg;
+  }
+
+
+  fn new_err(code: u32) -> Self {
+    Mensagem::default()
+  }
+
+}
+
 /// A Session is responsible for a file transfer (TX or RX).
 /// When RXing, the file contents will be stored in attribute "buffer"
 /// When TXing, file contents are first stored in "buffer", and then sent from there
@@ -136,40 +212,6 @@ impl Sessao {
     }
   }
 
-  /// utility function: generates a Req message. The kind of Req (rrq or wrq)
-  /// is specified in the closure f_enc
-  fn new_req(fname: &str, f_enc: impl FnOnce(Req)->mensagem::Msg) -> Mensagem {
-    let mut msg = Mensagem::default();
-    let mut inner = Req::default();
-   
-    inner.set_mode(Mode::Octet);
-    inner.fname = String::from(fname);
-    msg.msg = Some(f_enc(inner));
-
-    return msg;
-  }
-
-  fn new_ack(block: u32) -> Mensagem {
-    let mut msg = Mensagem::default();
-    let mut inner = Ack::default();
-   
-    inner.block_n = block;
-    msg.msg = Some(Msg::Ack(inner));
-
-    return msg;
-  }
-
-  fn new_data(block: u32, body: &[u8]) -> Mensagem {
-    let mut msg = Mensagem::default();
-    let mut inner = Data::default();
-   
-    inner.block_n = block;
-    inner.message.extend(body);
-    msg.msg = Some(Msg::Data(inner));
-
-    return msg;
-  }
-
   /// starts transmission of a file: sends contents of "data" to a file named "fname"
   async fn send(&mut self, fname: &str, data: &[u8]) {
     if self.estado != Estado::Idle {
@@ -177,10 +219,11 @@ impl Sessao {
     }
     
     // creates a Wrq message
-    let msg = Sessao::new_req(fname, |req| mensagem::Msg::Wrq(req));
+    let msg = Mensagem::new_wrq(fname);
+    // let msg = Sessao::new_req(fname, |req| mensagem::Msg::Wrq(req));
 
     // ... and then encodes it
-    let mut buffer = Sessao::encode(msg);
+    let mut buffer = msg.serialize();
 
     // finally, sends the message and starts the FSM
     if let Ok(_n) = self.sock.send_to(&buffer, self.server).await {
@@ -202,9 +245,9 @@ impl Sessao {
     }
 
     // creates a Rrq message
-    let msg = Sessao::new_req(fname, |req| mensagem::Msg::Rrq(req));
+    let msg = Mensagem::new_rrq(fname);
     // ... and then encodes it
-    let mut buffer = Sessao::encode(msg);
+    let mut buffer = msg.serialize();
 
     // finally, sends the message and starts the FSM
     if let Ok(_n) = self.sock.send_to(&buffer, self.server).await {
@@ -271,8 +314,8 @@ impl Sessao {
                                 self.status = Status::Unknown;
                               }
                           }
-                          let resp = Sessao::new_ack(data.block_n);
-                          let mut buffer = Sessao::encode(resp);
+                          let resp = Mensagem::new_ack(data.block_n);
+                          let mut buffer = resp.serialize();
                           if let Err(_e) = self.sock.send_to(&buffer, self.server).await {
                             self.estado = Estado::Finish;
                             self.status = Status::Unknown;
@@ -302,21 +345,14 @@ impl Sessao {
     ClienteTFTP::DATA_SIZE.min(self.buffer.len())
   }
 
-  // utility function to encode a message
-  fn encode(msg: Mensagem) -> bytes::BytesMut {
-    let mut buffer = bytes::BytesMut::new();
-    msg.encode(&mut buffer);                                
-    buffer
-  }
-
   /// sends a block of data ... the first available chunk in buffer
   async fn send_data(&mut self) -> Option<bool> {
     // the size of the next block of data
     let body_len = self.get_chunk_size();
     // creates a data message
-    let data = Sessao::new_data(self.seqno as u32, &self.buffer[..body_len]);
+    let data = Mensagem::new_data(self.seqno as u32, &self.buffer[..body_len]);
     // ... and then encodes it
-    let mut buffer = Sessao::encode(data);
+    let mut buffer = data.serialize();
     // sends the data message, and updates state of the FSM
     if let Err(_e) = self.sock.send_to(&buffer, self.server).await {
       self.estado = Estado::Finish;
