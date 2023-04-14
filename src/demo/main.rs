@@ -6,29 +6,55 @@ pub mod tftp2 {
     }
   }
   
-use tftp2::spec;
+use tftp2::spec::{mensagem::Msg, *};
 use prost;
 use bytes::BytesMut;
 use prost::Message;
 
 fn main() {
-    let mut msg = spec::Req::default();
-    msg.set_mode(spec::Mode::Octet);
-    msg.fname = String::from("teste.txt");
+    let mut msg = Mensagem::default();
+    let mut inner = Req::default();
+    // msg.msg = Some(spec::(inner));
     println!("{:?}", msg);
+   
+    inner.set_mode(Mode::Octet);
+    inner.fname = String::from("teste.txt");
+    msg.msg = Some(mensagem::Msg::Wrq(inner));
 
     let mut buffer = BytesMut::new();
     let data = msg.encode(&mut buffer);
     println!("encoded={:?}", buffer);
-    let msg = spec::Req::decode(buffer);    
+    let msg = Mensagem::decode(buffer);    
     
-    // let msg:Result<spec::Req, prost::DecodeError> = prost::Message::decode(buffer);    
     match msg {
-        Ok(msg) => {
+        Ok(msg) => {            
             println!("decoded: {:?}", msg);
+            if let Some(msg) = msg.msg {
+                match msg {
+                    Msg::Rrq(inner) => {
+                        println!("rrq: {:?}", inner);
+                    }
+                    Msg::Wrq(inner) => {
+                        println!("wrq: {:?}", inner);
+                    }
+                    Msg::Data(inner) => {
+                        println!("data: {:?}", inner);
+                    }
+                    Msg::Ack(inner) => {
+                        println!("ack: {:?}", inner);
+                    }
+                    Msg::Error(inner) => {
+                        println!("err: {:?}", inner);
+                    }
+                    _ => {
+                        println!("Alguma outra coisa ...");
+                    }
+                }    
+            }
         }
         Err(e) => {
             println!("Erro: {:?}", e);
         }
     }
+    
 }
