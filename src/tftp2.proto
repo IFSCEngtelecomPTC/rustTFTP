@@ -1,0 +1,77 @@
+syntax = "proto2";
+ 
+package tftp2;
+
+enum Mode {
+    netascii = 1;
+    octet = 2;
+    mail = 3;
+}
+
+enum ErrorCode {
+    FileNotFound = 1;
+    AccessViolation = 2;
+    DiskFull = 3;
+    IllegalOperation = 4;
+    UnknownTid = 5;
+    FileExists = 6;
+    UnknownSession = 7;
+    Unedfined = 8;
+}
+
+message REQ {
+    required string fname = 1;
+    required Mode mode = 2;
+}
+
+message DATA {
+    required bytes message = 1;
+    required uint32 block_n = 2;
+}
+
+message ACK {
+    required uint32 block_n = 1;
+}
+
+message Error {
+    required ErrorCode errorcode = 1;
+}
+
+message Path {
+  required string path = 1;
+}
+  
+message ListResponse {
+    repeated ListItem items = 1;
+}
+
+message ListItem {
+    oneof answer{
+        FILE file = 1;
+        Path dir = 2;
+    }    
+}
+
+message FILE{
+    required string nome = 1;
+    required int32 tamanho = 2;
+}
+
+message MOVE {
+    required string nome_orig = 1;
+    optional string nome_novo = 2;
+}
+
+message Mensagem {
+	oneof msg{
+		REQ rrq = 1;
+		REQ wrq = 2;
+        DATA data = 3;
+        ACK ack = 4;
+        Error error = 5;
+        Path list = 6;
+        ListResponse list_resp = 7;
+        Path mkdir = 8;
+        MOVE move = 9;
+	}
+}
