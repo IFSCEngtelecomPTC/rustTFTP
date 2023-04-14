@@ -6,7 +6,6 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::str::FromStr;
 
 use tftp2::spec::{mensagem::Msg, *};
-use prost;
 use prost::Message;
 
 // Include the `items` module, which is generated from items.proto.
