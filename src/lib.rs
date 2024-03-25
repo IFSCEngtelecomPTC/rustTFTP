@@ -77,18 +77,7 @@ impl Sessao {
   /// converts a string with an IP adress to a Ipv4Addr
   /// is there a simpler way ???
   fn parse_ip(ip: &str) -> Option<Ipv4Addr> {
-    let ip:Vec<_> = ip.split('.')
-                           .map(|c| c.parse::<u8>())
-                           .collect();
-    if ! ip.iter().any(|x| x.is_err()) {
-      if ip.len() == 4 {
-        let ip:Vec<_> = ip.into_iter()
-                          .map(|x| x.unwrap())
-                          .collect();
-        return Some(Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]));
-      }
-    }
-    None
+    ip.parse::<Ipv4Addr>().ok()
   }
 
   /// just checks if FSM is finished
