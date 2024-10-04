@@ -27,25 +27,34 @@ enum Comandos {
    recebe {arquivo: String} 
 }
 
+fn show_status(status: Status) -> String {
+   match status {
+      Status::OK => "Arquivo recebido e gravado".to_owned(),
+      Status::Error(e) => format!("Erro: {:?}", e),
+      Status::Unknown =>  "Erro desconhecido".to_owned(),
+      Status::Timeout =>  "Timeout".to_owned(),
+      Status::MaxRetriesExceeded =>  "retransmissões excedidas".to_owned()
+   }
+}
+
 fn main() {
    let args = Args::parse();
+
+   let cliente = ClienteTFTP::new(&args.server, args.port);
+   let status;
 
    match &args.cmd {
       Comandos::envia{arquivo} => {
          println!("enviando {} para {}", arquivo, &args.server);
+         status = cliente.envia(arquivo);
       }
       Comandos::recebe {arquivo} => {
          println!("recebendo {} de {}", arquivo, &args.server);
+         status = cliente.recebe(arquivo, arquivo);
       }
    }
-   std::process::exit(0);
 
-   let cliente = ClienteTFTP::new(&args.server, args.port);
-   match cliente.recebe("teste", "teste") {
-      Status::OK => println!("Arquivo recebido e gravado"),
-      Status::Error(e) => println!("Erro: {:?}", e),
-      Status::Unknown => println!("Erro desconhecido"),
-      Status::Timeout => println!("Timeout"),
-      Status::MaxRetriesExceeded => println!("retransmissões excedidas")
-   }
+   println!("{}", show_status(status));
+
+   std::process::exit(0);
 }
