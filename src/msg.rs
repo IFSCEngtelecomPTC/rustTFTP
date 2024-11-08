@@ -1,4 +1,7 @@
 use std::fmt;
+use std::ffi::{CStr, CString};
+use std::ops::Index;
+use std::str::FromStr;
 
 pub enum Mensagem {
     Wrq(Requisicao), 
@@ -124,11 +127,37 @@ impl Codec for ERR {
     }
 }
 
-fn get_string(buffer: &[u8]) -> String {
+fn get_string0(buffer: &[u8]) -> String {
     let sub:Vec<u8> = buffer.into_iter()
                             .take_while(|x| **x != 0)
                             .map(|x| *x).collect();
     String::from_utf8_lossy(&sub).into_owned()
+}
+
+fn get_string2(buffer: &[u8]) -> Option<&str> {
+    if let Ok(x) = CStr::from_bytes_until_nul(buffer) {
+        if let Ok(s) = x.to_str() {
+            return Some(s);
+        }
+    }
+    None
+}
+
+fn get_string(buffer: &[u8]) -> Option<String> {
+    if let Some(s) = get_string2(buffer) {
+        return Some(s.to_owned());
+    }
+    None
+
+    // let buf = Vec::from(buffer);
+    // if let Ok(s) = CString::new(buf) {
+    //     if let Ok(res) = s.to_str() {
+    //         if let Ok(val) = String::from_str(res) {
+    //             return Some(val);
+    //         }
+    //     }
+    // }
+    // None
 }
 
 impl Requisicao {
@@ -144,20 +173,23 @@ impl Requisicao {
                 return None;
             }
         };
-        let name = get_string(&buffer[2..]);
-        let modo = get_string(&buffer[name.len()+3..]);
-        Some(Requisicao{
-            fname: name, 
-            modo: match modo.as_str() {
-                "octet" => Modo::Octet,
-                "netascii" => Modo::Netascii,
-                "mail" => Modo::Mail,
-                _ => {
-                    panic!("modo inválido");
-                }
-            },
-            tipo: tipo
-        })
+        if let Some(name) = get_string(&buffer[2..]) {
+            if let Some(modo) = get_string(&buffer[name.len()+3..]) {
+                return Some(Requisicao{
+                    fname: name, 
+                    modo: match modo.as_str() {
+                        "octet" => Modo::Octet,
+                        "netascii" => Modo::Netascii,
+                        "mail" => Modo::Mail,
+                        _ => {
+                            panic!("modo inválido");
+                        }
+                    },
+                    tipo: tipo
+                });
+            }
+        }
+        None
     }
 
     pub fn new(tipo: TipoReq, fname: &str, modo: Modo) -> Option<Self> {
@@ -261,11 +293,13 @@ impl ERR {
         }
         let err_code = get_shortint(&buffer[2..]);
 
-        let err_msg = get_string(&buffer[4..]);
-        Some(ERR{
-            err_code: err_code,
-            err_msg: err_msg
-        })
+        if let Some(err_msg) = get_string(&buffer[4..]) {
+            return Some(ERR{
+                err_code: err_code,
+                err_msg: err_msg
+            });
+        }
+        None
     }
 
     pub fn new(err_code: u16, err_msg: &str) -> Option<Self> {
